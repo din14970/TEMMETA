@@ -1,0 +1,455 @@
+{
+    "Acquisition": {
+        "AcquisitionDatetime": {
+            "DateTime": "0"
+        },
+        "AcquisitionStartDatetime": {
+            "DateTime": "1554902425"
+        },
+        "BeamType": "",
+        "SourceType": "Monochromator"
+    },
+    "BinaryResult": {
+        "AcquisitionUnit": "",
+        "CompositionType": "",
+        "Detector": "SuperXG1",
+        "Encoding": "",
+        "Offset": {
+            "x": "-9.016565482561257e-009",
+            "y": "-9.016565482561257e-009"
+        },
+        "PixelSize": {
+            "height": "3.522095891625491e-011",
+            "width": "3.522095891625491e-011"
+        },
+        "PixelUnitX": "m",
+        "PixelUnitY": "m"
+    },
+    "Core": {
+        "MetadataDefinitionVersion": "7.9",
+        "MetadataSchemaVersion": "v1/2013/07",
+        "guid": "00000000000000000000000000000000"
+    },
+    "CustomProperties": {
+        "Aperture[C1].Name": {
+            "type": "string",
+            "value": "2000"
+        },
+        "Aperture[C2].Name": {
+            "type": "string",
+            "value": "50"
+        },
+        "Aperture[C3].Name": {
+            "type": "string",
+            "value": "2000"
+        },
+        "Aperture[OBJ].Name": {
+            "type": "string",
+            "value": "None"
+        },
+        "Aperture[SA].Name": {
+            "type": "string",
+            "value": "None"
+        },
+        "Detectors[SuperXG11].IncidentAngle": {
+            "type": "double",
+            "value": "0.0945968"
+        },
+        "Detectors[SuperXG11].SpectrumBeginEnergy": {
+            "type": "long",
+            "value": "150"
+        },
+        "Detectors[SuperXG11].Temperature": {
+            "type": "double",
+            "value": "203.25"
+        },
+        "Detectors[SuperXG12].IncidentAngle": {
+            "type": "double",
+            "value": "0.0945968"
+        },
+        "Detectors[SuperXG12].SpectrumBeginEnergy": {
+            "type": "long",
+            "value": "150"
+        },
+        "Detectors[SuperXG12].Temperature": {
+            "type": "double",
+            "value": "203.25"
+        },
+        "Detectors[SuperXG13].IncidentAngle": {
+            "type": "double",
+            "value": "0.0945968"
+        },
+        "Detectors[SuperXG13].SpectrumBeginEnergy": {
+            "type": "long",
+            "value": "150"
+        },
+        "Detectors[SuperXG13].Temperature": {
+            "type": "double",
+            "value": "203.25"
+        },
+        "Detectors[SuperXG14].IncidentAngle": {
+            "type": "double",
+            "value": "0.0945968"
+        },
+        "Detectors[SuperXG14].SpectrumBeginEnergy": {
+            "type": "long",
+            "value": "150"
+        },
+        "Detectors[SuperXG14].Temperature": {
+            "type": "double",
+            "value": "203.25"
+        },
+        "Scan.ScanTransformation.A11": {
+            "type": "double",
+            "value": "1"
+        },
+        "Scan.ScanTransformation.A12": {
+            "type": "double",
+            "value": "0"
+        },
+        "Scan.ScanTransformation.A13": {
+            "type": "double",
+            "value": "-0.0308242"
+        },
+        "Scan.ScanTransformation.A21": {
+            "type": "double",
+            "value": "0"
+        },
+        "Scan.ScanTransformation.A22": {
+            "type": "double",
+            "value": "1"
+        },
+        "Scan.ScanTransformation.A23": {
+            "type": "double",
+            "value": "-0.0251362"
+        },
+        "StemMagnification": {
+            "type": "double",
+            "value": "5.1e+006"
+        }
+    },
+    "Detectors": {
+        "Detector-0": {
+            "CollectionAngleRange": {
+                "begin": "0",
+                "end": "0"
+            },
+            "DetectorName": "BF",
+            "DetectorType": "ScanningDetector",
+            "Enabled": "true",
+            "Gain": "37.480715999999987",
+            "Inserted": "false",
+            "Offset": "-1.0309000000000008"
+        },
+        "Detector-1": {
+            "Binning": {
+                "height": "2",
+                "width": "2"
+            },
+            "DarkGainCorrectionType": "2",
+            "DetectorName": "BM-Ceta",
+            "DetectorType": "ImagingDetector",
+            "ExposureMode": "",
+            "ExposureTime": "0.040000000000000001",
+            "ReadOutArea": {
+                "bottom": "2048",
+                "left": "0",
+                "right": "2048",
+                "top": "0"
+            },
+            "Shutters": {
+                "Shutter-0": {
+                    "Position": "PostSpecimen",
+                    "Type": "Electrostatic"
+                }
+            }
+        },
+        "Detector-10": {
+            "AnalyticalDetectorShutterState": "4",
+            "AzimuthAngle": "5.497787143782138",
+            "BeginEnergy": "150",
+            "CollectionAngle": "0.17499999999999999",
+            "DetectorName": "SuperXG14",
+            "DetectorType": "AnalyticalDetector",
+            "Dispersion": "5",
+            "ElectronicsNoise": "28.600000000000001",
+            "ElevationAngle": "0.31415926999999999",
+            "Enabled": "true",
+            "InputCountRate": "3603",
+            "LiveTime": "154.99064249999998",
+            "OffsetEnergy": "-475.69756499999994",
+            "OutputCountRate": "1481",
+            "PulseProcessTime": "2.9081620097620193e-006",
+            "RealTime": "377.09403922494323"
+        },
+        "Detector-2": {
+            "CollectionAngleRange": {
+                "begin": "0",
+                "end": "0"
+            },
+            "DetectorName": "DF2",
+            "DetectorType": "ScanningDetector",
+            "Enabled": "true",
+            "Gain": "49.655091999999975",
+            "Inserted": "false",
+            "Offset": "-1.4228525390625038"
+        },
+        "Detector-3": {
+            "CollectionAngleRange": {
+                "begin": "0",
+                "end": "0"
+            },
+            "DetectorName": "DF4",
+            "DetectorType": "ScanningDetector",
+            "Enabled": "true",
+            "Gain": "49.209071499999958",
+            "Inserted": "false",
+            "Offset": "-0.90857812499999469"
+        },
+        "Detector-4": {
+            "Binning": {
+                "height": "2",
+                "width": "2"
+            },
+            "DarkGainCorrectionType": "2",
+            "DetectorName": "EF-CCD",
+            "DetectorType": "ImagingDetector",
+            "ExposureMode": "",
+            "ExposureTime": "0.040000000000000001",
+            "ReadOutArea": {
+                "bottom": "2048",
+                "left": "0",
+                "right": "2048",
+                "top": "0"
+            },
+            "Shutters": {
+                "Shutter-0": {
+                    "Position": "PostSpecimen",
+                    "Type": "Electrostatic"
+                }
+            }
+        },
+        "Detector-5": {
+            "Binning": {
+                "height": "2",
+                "width": "2"
+            },
+            "DarkGainCorrectionType": "2",
+            "DetectorName": "EF-CINEMA",
+            "DetectorType": "ImagingDetector",
+            "ExposureMode": "",
+            "ExposureTime": "0.040000000000000001",
+            "ReadOutArea": {
+                "bottom": "2048",
+                "left": "0",
+                "right": "2048",
+                "top": "0"
+            },
+            "Shutters": {
+                "Shutter-0": {
+                    "Position": "PostSpecimen",
+                    "Type": "Electrostatic"
+                }
+            }
+        },
+        "Detector-6": {
+            "CollectionAngleRange": {
+                "begin": "0.10235004544887286",
+                "end": "0.20000000000000001"
+            },
+            "DetectorName": "HAADF",
+            "DetectorType": "ScanningDetector",
+            "Enabled": "true",
+            "Gain": "40.571440749408183",
+            "Inserted": "true",
+            "Offset": "-1.97"
+        },
+        "Detector-7": {
+            "AnalyticalDetectorShutterState": "4",
+            "AzimuthAngle": "0.78539816339744828",
+            "BeginEnergy": "150",
+            "CollectionAngle": "0.17499999999999999",
+            "DetectorName": "SuperXG11",
+            "DetectorType": "AnalyticalDetector",
+            "Dispersion": "5",
+            "ElectronicsNoise": "28.600000000000001",
+            "ElevationAngle": "0.31415926999999999",
+            "Enabled": "true",
+            "InputCountRate": "3603",
+            "LiveTime": "154.99064249999998",
+            "OffsetEnergy": "-475.69756499999994",
+            "OutputCountRate": "1481",
+            "PulseProcessTime": "2.9081620097620193e-006",
+            "RealTime": "377.09403922494323"
+        },
+        "Detector-8": {
+            "AnalyticalDetectorShutterState": "4",
+            "AzimuthAngle": "2.3561944901923448",
+            "BeginEnergy": "150",
+            "CollectionAngle": "0.17499999999999999",
+            "DetectorName": "SuperXG12",
+            "DetectorType": "AnalyticalDetector",
+            "Dispersion": "5",
+            "ElectronicsNoise": "28.600000000000001",
+            "ElevationAngle": "0.31415926999999999",
+            "Enabled": "true",
+            "InputCountRate": "3603",
+            "LiveTime": "154.99064249999998",
+            "OffsetEnergy": "-475.69756499999994",
+            "OutputCountRate": "1481",
+            "PulseProcessTime": "2.9081620097620193e-006",
+            "RealTime": "377.09403922494323"
+        },
+        "Detector-9": {
+            "AnalyticalDetectorShutterState": "4",
+            "AzimuthAngle": "3.9269908169872414",
+            "BeginEnergy": "150",
+            "CollectionAngle": "0.17499999999999999",
+            "DetectorName": "SuperXG13",
+            "DetectorType": "AnalyticalDetector",
+            "Dispersion": "5",
+            "ElectronicsNoise": "28.600000000000001",
+            "ElevationAngle": "0.31415926999999999",
+            "Enabled": "true",
+            "InputCountRate": "3603",
+            "LiveTime": "154.99064249999998",
+            "OffsetEnergy": "-475.69756499999994",
+            "OutputCountRate": "1481",
+            "PulseProcessTime": "2.9081620097620193e-006",
+            "RealTime": "377.09403922494323"
+        }
+    },
+    "EnergyFilter": {
+        "EntranceApertureType": ""
+    },
+    "GasInjectionSystems": "",
+    "Instrument": {
+        "ComputerName": "TITAN52333710",
+        "ControlSoftwareVersion": "2.11.1",
+        "InstrumentClass": "Titan",
+        "InstrumentId": "3371",
+        "InstrumentModel": "Titan",
+        "Manufacturer": "FEI Company"
+    },
+    "Optics": {
+        "AccelerationVoltage": "300000",
+        "Apertures": {
+            "Aperture-0": {
+                "Diameter": "0.002",
+                "Enabled": "0",
+                "MechanismType": "Motorized",
+                "Name": "C1",
+                "Number": "1",
+                "PositionOffset": {
+                    "x": "-0.0051125781250000004",
+                    "y": "-0.00058984374999999998"
+                },
+                "Type": "Circular"
+            },
+            "Aperture-1": {
+                "Diameter": "5.0000000000000002e-005",
+                "Enabled": "3",
+                "MechanismType": "Motorized",
+                "Name": "C2",
+                "Number": "2",
+                "PositionOffset": {
+                    "x": "0.0044281249999999998",
+                    "y": "-0.00015781249999999999"
+                },
+                "Type": "Circular"
+            },
+            "Aperture-2": {
+                "Diameter": "0.002",
+                "Enabled": "0",
+                "MechanismType": "Motorized",
+                "Name": "C3",
+                "Number": "3",
+                "PositionOffset": {
+                    "x": "-0.0048928906250000001",
+                    "y": "-0.000606015625"
+                },
+                "Type": "Circular"
+            },
+            "Aperture-3": {
+                "MechanismType": "Motorized",
+                "Name": "OBJ",
+                "Number": "4",
+                "PositionOffset": {
+                    "x": "-0.0064200000000000004",
+                    "y": "-0.001230234375"
+                },
+                "Type": "None"
+            },
+            "Aperture-4": {
+                "MechanismType": "Manual",
+                "Name": "SA",
+                "Number": "5",
+                "Type": "None"
+            }
+        },
+        "BeamConvergence": "0.017027808627007573",
+        "C1LensIntensity": "-0.36628735065460205",
+        "C2LensIntensity": "0.21393260359764099",
+        "C3LensIntensity": "0.35795029997825623",
+        "CameraLength": "0.076999999999999999",
+        "Defocus": "8.0010830968235017e-008",
+        "DiffractionLensIntensity": "0.41633844375610352",
+        "EFTEMOn": "false",
+        "ExtractorVoltage": "4050.018310546875",
+        "Focus": "8.0010830968235019e-005",
+        "FullScanFieldOfView": {
+            "x": "1.8033130965122514e-008",
+            "y": "1.8033130965122514e-008"
+        },
+        "GunLensSetting": "1",
+        "HighMagnificationMode": "None",
+        "IlluminationMode": "Probe",
+        "IntermediateLensIntensity": "-0.19491490721702576",
+        "LastMeasuredScreenCurrent": "3.3786876089422551e-010",
+        "MiniCondenserLensIntensity": "0.18086114525794983",
+        "ObjectiveLensIntensity": "0.88565826416015625",
+        "ObjectiveLensMode": "HM",
+        "OperatingMode": "2",
+        "ProbeMode": "1",
+        "Projector1LensIntensity": "-0.34385821223258972",
+        "Projector2LensIntensity": "-0.96843445301055908",
+        "ProjectorMode": "1",
+        "ScreenCurrent": "3.3786876089422551e-010",
+        "SpotIndex": "6",
+        "StemFocus": "0",
+        "TemOperatingSubMode": "None"
+    },
+    "Sample": "",
+    "Scan": {
+        "DwellTime": "3.9999999999999998e-006",
+        "FrameTime": "1.488912",
+        "LineIntegrationCount": "1",
+        "LineInterlacing": "1",
+        "LineTime": "0.002908",
+        "MainsLockOn": "false",
+        "ScanArea": {
+            "bottom": "1",
+            "left": "0",
+            "right": "1",
+            "top": "0"
+        },
+        "ScanRotation": "-0.12217304763960168",
+        "ScanSize": {
+            "height": "512",
+            "width": "512"
+        }
+    },
+    "Stage": {
+        "AlphaTilt": "0.010382475027923711",
+        "BetaTilt": "0.10271262647986627",
+        "HolderType": "FEI Double Tilt",
+        "Position": {
+            "x": "6.1326719999999998e-005",
+            "y": "8.4754904000000015e-005",
+            "z": "-0.00015332254387328596"
+        }
+    },
+    "Vacuum": {
+        "VacuumMode": "Ready"
+    }
+}
