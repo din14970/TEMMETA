@@ -9,7 +9,8 @@ import concurrent.futures as cf #parrallel tasks
 import h5py
 import numpy as np
 import json
-from scipy.sparse import csc_matrix, csr_matrix, dok_matrix, vstack
+from scipy.sparse import csc_matrix, csr_matrix, dok_matrix, vstack, spmatrix
+from scipy.sparse import save_npz, load_npz
 #For working with images
 from PIL import Image
 from matplotlib import cm
@@ -19,7 +20,8 @@ from matplotlib_scalebar.scalebar import ScaleBar, SI_LENGTH_RECIPROCAL
 import tkinter as Tk
 from tkinter import filedialog
 #my own modules
-from decorators import timeit
+from .decorators import timeit
+from . import plottingtools as pl
 
 
 def get_file_path_dialog(filetypes: tuple = (("emd files","*.emd"),("all files","*.*"))):
@@ -493,7 +495,7 @@ def translate_stream_frame(d: h5py._hl.dataset.Dataset, flut: np.ndarray,
 
 @timeit
 def get_spectrum_stream(f: h5py._hl.files.File, det_no: int = 0,
-                               frames: list = [], one_matrix = True, compress_type = "dok"):
+                               frames: list = [], one_matrix = True, compress_type = "dok", re_all: bool = False):
     '''
     Converts the spectrum stream data in .emd files to either one large sparse matrix or a list of sparse matrices,
     one per frame. The first case represents the second case with all frames stacked on top of eachother.
@@ -505,7 +507,10 @@ def get_spectrum_stream(f: h5py._hl.files.File, det_no: int = 0,
                                  multiple streams in the file. Default = 0.
         frames (list):           the list with indexes of frames you want to import. An empty
                                  list defaults to all frames in the stream.
-        re_all (bool):           Whether to return only the
+        compress_type (bool):    Type of compression that should be used to store the return data
+                                 memory. See Scipy.sparse for details.
+                                 Options: ['dok'(Default), 'none', 'csc', 'csr']
+        re_all (bool):           Whether to return only the spectrumstream or additional info
 
     Returns:
         A SpectrumStream object that contains all the information
@@ -530,46 +535,49 @@ def get_spectrum_stream(f: h5py._hl.files.File, det_no: int = 0,
     xs = int(acq['RasterScanDefinition']['Width'])
     ys = int(acq['RasterScanDefinition']['Height'])
 
+    if frames: #were indexes of frames provided?
+        frames = np.sort(frames).tolist() #indexing only accepts ascending order
+        d1d = np.array([])
+        for i in frames:
+            ix1, ix2 = get_frame_limits(i, flut)
+            d1d = np.append(d1d, d[ix1:ix2])
+        #inxs = get_frames_indexes(frames, flut, totln = d.len())
+        #d1d = d[:,0][inxs] #this is very slow, better to add incrementally to it
+        frame_dimension = len(frames)
+
+    else: #no frame indexes provided (default) then do the whole array
+        d1d = d[:].flatten()
+        frame_dimension = len(flut)
+
     #return one sparse matrix containing the entire stream
-    if one_matrix:
-        if frames: #were indexes of frames provided?
-            frames = np.sort(frames).tolist() #indexing only accepts ascending order
-            d1d = np.array([])
-            for i in frames:
-                ix1, ix2 = get_frame_limits(i, flut)
-                d1d = np.append(d1d, d[ix1:ix2])
-            #inxs = get_frames_indexes(frames, flut, totln = d.len())
-            #d1d = d[:,0][inxs] #this is very slow, better to add incrementally to it
-            frame_dimension = len(frames)
-
-        else: #no frame indexes provided (default) then do the whole array
-            d1d = d[:].flatten()
-            frame_dimension = len(flut)
-
-        specstr = convert_stream_to_sparse(d1d, (xs*ys*frame_dimension, chan), compress_type = compress_type)
-
-    #return a list of sparse matrices, each one for a frame
-    else:
-        if frames: #there are elements in frames
-            loopover = frames
-        else: #there are no elements in frames, loop over all
-            loopover = range(len(flut))
-
-        specstr = []
-
-        with cf.ThreadPoolExecutor() as executor: #perform with threading
-            #create the threads list of translate stream for all frames in loopover
-            results = [executor.submit(translate_stream_frame, d, flut, xs, ys,
-                                       cs = chan, frm = i, compress_type = compress_type) for i in loopover]
-            #When completed, add the output from translate stream to the list
-            for f in cf.as_completed(results):
-                specstr.append(f.result())
+    specstr = convert_stream_to_sparse(d1d, (xs*ys*frame_dimension, chan), compress_type = compress_type)
+    #
+    # #return a list of sparse matrices, each one for a frame
+    # else:
+    #     if frames: #there are elements in frames
+    #         loopover = frames
+    #     else: #there are no elements in frames, loop over all
+    #         loopover = range(len(flut))
+    #
+    #     specstr = []
+    #
+    #     with cf.ThreadPoolExecutor() as executor: #perform with threading
+    #         #create the threads list of translate stream for all frames in loopover
+    #         results = [executor.submit(translate_stream_frame, d, flut, xs, ys,
+    #                                    cs = chan, frm = i, compress_type = compress_type) for i in loopover]
+    #         #When completed, add the output from translate stream to the list
+    #         for f in cf.as_completed(results):
+    #             specstr.append(f.result())
 
         #without threading
         #for i in loopover:
             #frmmat = translate_stream_frame(d, flut, xs, ys, cs = chan, frm = i, compress_type = "csc")
             #specstr.append(frmmat)
-    specstr_obj = specstr #for if we turn the returned thing into some custom class
+    disp = float(get_detector_property(md1, "Dispersion"))
+    specstr_obj = SpectrumStream(specstr, (md1, md2), xs, ys, frames, chan, disp) #for if we turn the returned thing into some custom class
+    if not one_matrix:
+        specstr_obj.get_frame_list(convert = True)
+
     if re_all:
         return specstr_obj, d, md1, md2, flut, frames
     else:
@@ -578,11 +586,12 @@ def get_spectrum_stream(f: h5py._hl.files.File, det_no: int = 0,
 
 class SpectrumStream(object):
     '''
-
+    Abstraction of SpectrumStream data as an object
     '''
     def __init__(self, data, metadata, xs, ys, frms, cs, disp):
+        '''Set all the parameters'''
         self._data = data
-        self.metadata = meta
+        self._metadata = metadata
         if isinstance(self.data, list):
             self._om = False
         else:
@@ -591,86 +600,239 @@ class SpectrumStream(object):
         self.ys = ys
         self.fs = self.xs*self.ys
         self.frames = frms #list of frame indexes
-        self.num_frames = frms.len()
+        if frms:
+            self.num_frames = len(frms)
+        else:
+            self.num_frames = int(self.data.shape[0]/self.xs/self.ys)
         self.cs = cs #number of channels
-        self.disp = float(get_detector_property(md1, "Dispersion")) #number of eV per channel
+        self.disp = disp #number of eV per channel
+
+        self.px=(float(self.metadata["BinaryResult"]["PixelSize"]["width"]))#x size
+        self.py=(float(self.metadata["BinaryResult"]["PixelSize"]["height"]))#x size
+        self.units = self.metadata["BinaryResult"]["PixelUnitX"]
+
+        self.tot_spectrum = self.get_own_spectrum_sum()
+        self.tot_stemspec_sparse = self.get_frame_sum()
+        self.tot_stemspec = self.reshape_sparse_matrix(self.tot_stemspec_sparse)
+
+
+    @property
+    def scan_dimensions(self):
+        return (self.xs, self.ys)
+
+
+    @property
+    def scan_size(self):
+        return (self.xs*self.px, self.ys*self.py)
+
+
+    @property
+    def framecount(self):
+        return self.num_frames
+
+
+    @property
+    def channelcount(self):
+        return self.cs
+
+
+    @property
+    def is_one_matrix(self):
+        return self._om
+
+
+    @property
+    def is_list(self):
+        return not self._om
+
+
+    @property
+    def metadata(self):
         try:
-            metadata = self.metadata[0]
-        else:
-            metadata = self.metadata
-        self.px=(float(metadata["BinaryResult"]["PixelSize"]["width"]))#x size
-        self.py=(float(metadata["BinaryResult"]["PixelSize"]["height"]))#x size
-        self.units = metadata["BinaryResult"]["PixelUnitX"]
+            metadata = self._metadata[0]
+        except:
+            metadata = self._metadata
+        return metadata
 
 
-    def __getitem__(x, y, channels, frames):
-        f = self._data[frames]
-        inx = self._get_inx_from_xy(x, y)
-        for i in f
+    @property
+    def all_metadata(self):
+        return self._metadata
 
 
-    def get_frame_list(self, convert = False):
-        if self._om:
-            toreturn = [self._data[i*self.fs:(i+1)*self.fs,:] for i in range(self.num_frames)]
+    def get_frame_list(self, convert = False, compress_type = "csr"):
+        '''
+        Returns the stored data as a list of frames, each frames a sparse matrix.
+        If convert = True then the way the data is stored in the instance is changed to list.
+        '''
+        if self.is_one_matrix:
+            dt = self.data.tocsr() #we will do row slicing so it's faster
+            toreturn = [change_compress(dt[i*self.fs:(i+1)*self.fs,:], compress_type = compress_type)\
+                        for i in range(self.num_frames)]
             if convert:
                 self._data = toreturn
                 self._om = False
             return toreturn
         else:
-            return self._data
+            return self.data
 
 
-    def get_stack_frames(self, convert = False):
-        if self._om:
-            return self._data
+    def get_stack_frames(self, convert = False, compress_type = "csr"):
+        '''
+        Returns the stored data as one sparse matrix, each frame stacked as rows.
+        If convert = True then the way the data is stored is to this large matrix.
+        '''
+        if self.is_one_matrix:
+            return self.data
         else:
-            toreturn = vstack(self._data)
+            tostack = [i.tocsr() for i in self.data] #row stacking, change to csr
+            toreturn = vstack(tostack)
             if convert:
                 self._data = toreturn
                 self._om = False
-            return toreturn
+            return change_compress(toreturn, compress_type = compress_type)
 
 
-    def reshape_matrix(self):
-        pass
-        
+    def reshape_sparse_matrix(self, frmdat = None):
+        '''Return an intuitive 3D matrix representing one frame that is sliced with indices
+        (channel, x, y). If no data is provided, perform on sum of all frames.'''
+        if frmdat is None:
+            frmdat = self.get_frame_sum(compress_type = "csr")
+        return frmdat.T.toarray().reshape(self.cs, self.xs, self.ys)
+
+
+    def save_matrix(self, filename):
+        '''Save the full dataset to a file'''
+        filename = filename + ".npz"
+        data = self.get_stack_frames()
+        save_npz(filename, data)
+
 
     @property
     def data(self):
         return self._data
 
 
-    def get_frame_sum(self, comp_type: str = "none"):
+    def get_frame_sum(self, comp_type: str = "csr"):
+        '''Return a sparse matrix sum of all frames'''
         data = self.get_frame_list()
+        temp = 0
         for i in data:
             temp += i
-        #return the right type depending on chosen compression
-        if compress_type == 'none':
-            return temp.toarray()
-        elif compress_type == 'dok':
-            return temp
-        elif compress_type == 'csc':
-            return temp.tocsc()
-        elif compress_type == 'csr':
-            return temp.tocsr
+        return change_compress(temp, comp_type)
+
+
+    def get_image_peak_sum(self, energy: float, width: float, channel_querry: int = 20):
+        '''Get a 2D array (x,y) with total counts within a certain energy window'''
+        start = int((energy-width/2)*1000/self.disp) #starting channel index
+        end = int((energy+width/2)*1000/self.disp) #ending channel index
+
+        if end-start>channel_querry:
+            dt_csc = self.get_stack_frames().tocsc() #we intend to filter based on channels: columns
+            dt_ar = dt_csc[:, start:end].sum(axis = 1).getA1()  #add all these columns and make into 1D numpy array
+            dt_frms = np.reshape(dt_ar, (self.num_frames, self.ys, self.xs)) #reshape
         else:
-            raise ValueError("Not recognized compression type, should be none, dok, csc or csr")
+            dt_frms = self.tot_stemspec[start:end] #quite inefficient for multiple large arrays
+        return dt_frms.sum(axis = 0)
 
 
-    def _get_xy_from_inx(self, inx: np.ndarray):
-        assert np.max(inx) < self.xs*self.ys, "An index is out of range"
-        inx_ar = np.array(inx)
-        return (inx_ar%self.xs, (inx_ar/self.xs).astype(int))
+    @staticmethod
+    def get_spectrum_sum(data: spmatrix):
+        '''Return a sum spectrum of the sparse data supplied'''
+        data_sm = data.tocsr()
+        return data_sm.sum(axis = 0).getA1()
 
 
-    def _get_inx_from_xy(self, x, y):
-        assert np.max(x) < self.xs, "An x-index is outside the image range"
-        assert np.max(y) < self.ys, "A y-index is outside the image range"
-        X, Y = np.meshgrid(x,y)
-        Xf = X.ravel()
-        Yf = Y.ravel()
-        return Yf*self.xs+Xf
+    def get_own_spectrum_sum(self):
+        '''Return a sum spectrum of the data stored in the instance _data attribute'''
+        data_mat = self.get_stack_frames()
+        data_sm = data_mat.tocsr()
+        return data_sm.sum(axis = 0).getA1()
 
+
+    def plot_quick_spectrum(self, plot_channels: bool = False):
+        '''Plot a quick total spectrum representation of the data'''
+        #toplot = self.get_own_spectrum_sum()
+        toplot = self.tot_spectrum
+        fig, ax = pl.plot_quick_spectrum(toplot, plot_channels = plot_channels, disp = self.disp)
+        return fig, ax
+
+
+    def plot_energy_image(self, energy: float, width: float, scale_bar: bool = True, show_fig: bool = True, dpi: int = 100,
+    save_meta: bool = True, sb_settings: dict = {"location":'lower right', "color" : 'k', "length_fraction" : 0.15},
+    imshow_kwargs: dict = {}, savefile: str = ""):
+        '''
+        Plot and potentially save an image representing the sum of counts over all frames
+        within a particular energy window.
+
+        Args:
+        energy (float) : the energy to plot in keV
+        width (float) : the energy window to integrate over
+        scale_bar (bool) = True : whether to add a scale bar to the image. Metadata must contain this information.
+        show_fig (bool) = True : whether to show the figure
+        dpi (int) = 100 : dpi to save the image with
+        save_meta (bool) = True : save the metadata also as a separate json file with the same filename as the image
+        sb_settings (dict) = {"location":'lower right', "color" : 'k', "length_fraction" : 0.15}: settings for the scale bar
+        imshow_kwargs (dict) : optional formating arguments passed to the pyplot.imshow function
+        savefile (str) : file to save the image to. If empty (default) will not save the file.
+        '''
+        tp = self.get_image_peak_sum(energy, width)
+        pixelsize, pixelunit = get_scale(self.metadata)
+        fig, ax = pl.plot_image(tp, pixelsize, pixelunit, scale_bar = scale_bar,
+                       show_fig = show_fig, dpi = dpi,
+                       sb_settings = sb_settings,
+                       imshow_kwargs = imshow_kwargs)
+        if savefile:
+            fig.savefig(savefile, dpi = dpi)
+
+        if save_meta and savefile:
+            #if metadata save the metadata to a json file with the same name
+            path, ext = os.path.splitext(filename)
+            write_meta_json(path+".json", self.metadata)
+
+        return fig, ax
+
+
+def change_compress(temp, compress_type = "none"):
+    #return the right type depending on chosen compression
+    if compress_type == 'none':
+        return temp.toarray()
+    elif compress_type == 'dok':
+        return temp.todok()
+    elif compress_type == 'csc':
+        return temp.tocsc()
+    elif compress_type == 'csr':
+        return temp.tocsr()
+    else:
+        raise ValueError("Not recognized compression type, should be none, dok, csc or csr")
+
+
+def get_scale(metadata):
+    '''Searches metadata and returns the size of a pixel and the unit as  tuple'''
+    pixelsize=(float(metadata["BinaryResult"]["PixelSize"]["width"]))
+    pixelunit=metadata["BinaryResult"]["PixelUnitX"]
+    return pixelsize, pixelunit
+
+
+@timeit
+def save_all_image_frames(f, det_no: str, name: str, path:str ,
+               scale_bar: bool = False, show_fig: bool = False, dpi: int = 100, save_meta: bool = True,
+               sb_settings: dict = {"location":'lower right', "color" : 'k', "length_fraction" : 0.15}, imshow_kwargs: dict = {}):
+    '''
+    Shortcut to save all images to separate files
+    #add threading to this!
+    '''
+    if not os.path.exists(path):
+        os.makedirs(path)
+    imgdata = get_image_data_det_no(f, det_no)
+    toloop = range(imgdata.shape[-1]) #loop over number of frames
+
+    for i in toloop:
+        frame = imgdata[:,:,i]
+        metadata = get_meta_dict_det_no(f, "Image", det_no = det_no, frame = i)
+        save_single_image(imgdata = frame, filename = f"{path}{name}_{i}.tiff", metadata = metadata,
+                       scale_bar = scale_bar, show_fig = show_fig, dpi = dpi, save_meta = save_meta,
+                       sb_settings = sb_settings, imshow_kwargs = imshow_kwargs)
 
 
 def save_single_image(imgdata: np.ndarray, filename:str , metadata: dict,
@@ -690,34 +852,19 @@ def save_single_image(imgdata: np.ndarray, filename:str , metadata: dict,
     sb_settings (dict) = {"location":'lower right', "color" : 'k', "length_fraction" : 0.15}: settings for the scale bar
     imshow_kwargs (dict) : optional formating arguments passed to the pyplot.imshow function
     '''
+
+    pixelsize, pixelunit = get_scale(metadata)
     #initialize the figure and axes objects
-    fig = plt.figure(frameon=False, figsize = (imgdata.shape[0]/dpi, imgdata.shape[1]/dpi))
-    ax = plt.Axes(fig, [0., 0., 1., 1.])
-    ax.set_axis_off()
-    fig.add_axes(ax)
-    #plot the figure on the axes
-    s = ax.imshow(imdat, **imshow_kwargs)
+    fig, ax = pl.plot_image(imgdata, pixelsize, pixelunit, scale_bar = scale_bar,
+                   show_fig = show_fig, dpi = dpi,
+                   sb_settings = sb_settings,
+                   imshow_kwargs = imshow_kwargs)
 
-    if scale_bar:
-        #get scale bar info from metadata
-        px=(float(metadata["BinaryResult"]["PixelSize"]["width"]))
-        unit=metadata["BinaryResult"]["PixelUnitX"]
-        #check the units and adjust sb accordingly
-        if unit=='1/m':
-            px=px*10**(-9)
-            scalebar = ScaleBar(px, '1/nm', SI_LENGTH_RECIPROCAL, **sb_settings)
-        else:
-            scalebar = ScaleBar(px, unit, **sb_settings)
-        plt.gca().add_artist(scalebar)
-    #save the figure
-    plt.savefig(filename, dpi = dpi)
-
-    if show_fig:
-        plt.show()
-    else:
-        plt.close()
+    fig.savefig(filename, dpi = dpi)
 
     if save_meta:
         #if metadata save the metadata to a json file with the same name
         path, ext = os.path.splitext(filename)
         write_meta_json(path+".json", metadata)
+
+    return fig, ax
