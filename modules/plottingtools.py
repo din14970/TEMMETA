@@ -11,6 +11,8 @@ from scipy.sparse import csc_matrix, csr_matrix, dok_matrix, vstack, spmatrix
 import matplotlib.pyplot as plt
 from matplotlib_scalebar.scalebar import ScaleBar, SI_LENGTH_RECIPROCAL
 
+from . import processing as proc
+
 def plot_quick_spectrum(data: np.ndarray, plot_channels: bool = False, disp: float = 1.):
     '''Plot a spectrum quickly from a 1D array of intensities. Must provide the dispersion.'''
     fig, ax = plt.subplots(1)
@@ -28,7 +30,46 @@ def plot_quick_spectrum(data: np.ndarray, plot_channels: bool = False, disp: flo
     return fig, ax
 
 
-def rebin(arr, new_shape):
+def plot_spectrum_peaks(stream, log: bool = True, w: int = 40, pf_props = {"height" : 300, "width" : 10}):
+    '''
+    Quickly find peaks of a spectrumstream object and plot them
+
+    Args:
+        stream : io.SpectrumStream object
+        log (bool): show y axis logarithmic
+        w (int) : width of peaks in number of channels
+        pf_props (dict) = {"height" : 300, "width" : 10}: settings for identifying peaks
+
+    Returns:
+    figure, axis objects, peaks and peak objects it finds
+    '''
+    peaks, props = proc.get_spectrum_peaks(stream, **pf_props)
+    fig, ax = stream.plot_quick_spectrum(plot_channels = True)
+    if log:
+        ax.set_yscale('log')
+
+    ax.scatter(peaks, stream.tot_spectrum[peaks], label = "peaks ({})".format(len(peaks)), color = "C1")
+
+    for i in peaks:
+        ax.axvspan(i-w/2, i+w/2, alpha=0.2, color='red')
+
+    return fig, ax, peaks, props
+
+
+def rebin(arr: np.ndarray, new_shape: tuple):
+    '''
+    Rebin a 2D array representing an image to a smaller format. New shape must be
+    multiples of the original shape.
+
+    Args:
+    arr: 2D numpy array representing the image
+    new_shape: tuple of 2 numbers representing the new dimensions.
+
+    Returns:
+    2D numpy array
+    '''
+    assert arr.shape[0] > new_shape[0], "New shape must be smaller than original"
+    assert arr.shape[1] > new_shape[1], "New shape must be smaller than original"
     shape = (new_shape[0], arr.shape[0] // new_shape[0],
              new_shape[1], arr.shape[1] // new_shape[1])
     return arr.reshape(shape).mean(-1).mean(1)
@@ -50,6 +91,9 @@ def plot_image(imgdata: np.ndarray, pixelsize: float = 1., pixelunit: str = "", 
     dpi (int) = 100 : dpi to save the image with
     sb_settings (dict) = {"location":'lower right', "color" : 'k', "length_fraction" : 0.15}: settings for the scale bar
     imshow_kwargs (dict) : optional formating arguments passed to the pyplot.imshow function
+
+    Returns:
+    figure and axis objects
     '''
     #initialize the figure and axes objects
     if not show_fig:

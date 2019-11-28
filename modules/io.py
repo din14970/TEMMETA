@@ -390,8 +390,8 @@ def convert_stream_to_sparse(d1d: np.ndarray, dim: tuple, dv: int = 65535, compr
 
     Args:
         d1d (numpy.ndarray):    The array to be formatted
-        dim (tuple):            The (rows, columns) dimension of the returned csc_matrix.
-                                This should be (total number of scan positions, channels).
+        dim (tuple):            The (x, y, channel, frame) dimension of the hypothetical returned csc_matrix.
+                                frame can be none, then it is calculated based on the size of d1d.
         dv (int):               The value in the SpectrumStream that encodes "next pixel"
                                 Default = 65535
         compress_type (str):    Type of compression that should be used to store the return data
@@ -402,16 +402,27 @@ def convert_stream_to_sparse(d1d: np.ndarray, dim: tuple, dv: int = 65535, compr
         A Scipy.sparse.spmatrix object or a np.ndarray if compress_type = 'none'
     '''
 
-    #Initialize an array with the dimensions: total size * the number of channels
-    temp = dok_matrix(dim, dtype=np.int16)
+    #unpack the dimensions
+    xs, ys, ch, frm = dim
     #find the indexes where counts are registered (!= the counting number)
     cinx = np.argwhere(d1d!=dv)[:,0]
     #calc the pixel index to which these counts must be mapped
     pixind = cinx - np.arange(len(cinx)) - 1
+    #calculate the number of frames based on the size if frm is unknown
+    if frm is None:
+        pxlcount = len(d1d) - len(cinx)
+        frm = pxlcount // xs //ys
+    #calc the dimensions of the sparse matrix
+    dim_sparse = (xs*ys*frm, ch)
+    #Initialize an array with the dimensions: total size * the number of channels
+    temp = dok_matrix(dim_sparse, dtype=np.int16)
     #loop over the list of counts and put them in the right bin
     for i, j in zip(cinx, pixind):
-        chan = d1d[i] #the channel number = the value stored at the index
-        temp[j, chan] += 1 #increment the right entry
+        if j<xs*ys*frm: #throw away non complete frames
+            chan = d1d[i] #the channel number = the value stored at the index
+            temp[j, chan] += 1 #increment the right entry
+
+
     #return the right type depending on chosen compression
     compress_type = compress_type.lower()
     if compress_type == 'none':
@@ -489,7 +500,7 @@ def translate_stream_frame(d: h5py._hl.dataset.Dataset, flut: np.ndarray,
     ix1, ix2 = get_frame_limits(frm, flut)
     #query the frame from the long spectrumstream
     d1d = d[ix1:ix2].flatten()
-    temp = convert_stream_to_sparse(d1d, (xs*ys, cs), dv = dv, compress_type = compress_type)
+    temp = convert_stream_to_sparse(d1d, (xs, ys, cs, None), dv = dv, compress_type = compress_type)
     return temp
 
 
@@ -527,30 +538,47 @@ def get_spectrum_stream(f: h5py._hl.files.File, det_no: int = 0,
     md2 = get_meta_dict(f, sig, det, frame = 1)
     #get the acquisition parameters
     acq = get_spectrum_stream_acqset(f, det)
-    #get the frame table
-    flut = get_spectrum_stream_flut(f, det)
+    #get the frame table. There is not always one!!! If there is none then it's None
+    try:
+        flut = get_spectrum_stream_flut(f, det)
+    except:
+        flut = None
     #get a few commonly used vars
     chan = int(acq["bincount"]) #number of channels
 
     xs = int(acq['RasterScanDefinition']['Width'])
     ys = int(acq['RasterScanDefinition']['Height'])
 
-    if frames: #were indexes of frames provided?
-        frames = np.sort(frames).tolist() #indexing only accepts ascending order
-        d1d = np.array([])
-        for i in frames:
-            ix1, ix2 = get_frame_limits(i, flut)
-            d1d = np.append(d1d, d[ix1:ix2])
-        #inxs = get_frames_indexes(frames, flut, totln = d.len())
-        #d1d = d[:,0][inxs] #this is very slow, better to add incrementally to it
-        frame_dimension = len(frames)
-
-    else: #no frame indexes provided (default) then do the whole array
-        d1d = d[:].flatten()
+    #if not frames: #no frame indexes provided (default) then do the whole array
+    d1d = d[:].flatten()
+    if flut is not None:
         frame_dimension = len(flut)
+    else:
+        frame_dimension = None
+
+    if frames:
+        if flut is not None: #were indexes of frames provided? is there a lookup table
+            frames = np.sort(frames).tolist() #indexing only accepts ascending order
+            d1d = np.array([])
+            for i in frames:
+                ix1, ix2 = get_frame_limits(i, flut)
+                d1d = np.append(d1d, d[ix1:ix2])
+            #inxs = get_frames_indexes(frames, flut, totln = d.len())
+            #d1d = d[:,0][inxs] #this is very slow, better to add incrementally to it
+            frame_dimension = len(frames)
+        else:
+            print("No frame lookup table found, this may take a while...")
 
     #return one sparse matrix containing the entire stream
-    specstr = convert_stream_to_sparse(d1d, (xs*ys*frame_dimension, chan), compress_type = compress_type)
+    specstr = convert_stream_to_sparse(d1d, (xs, ys, chan, frame_dimension), compress_type = compress_type)
+
+    if flut is None:
+        frame_dimension = specstr.shape[0]//xs //ys
+        if frames:
+            omd = specstr.tocsr()
+            dls = [omd[i*xs*ys:(i+1)*xs*ys] for i in frames]
+            specstr = vstack(dls)
+            frame_dimension = specstr.shape[0]//xs//ys
     #
     # #return a list of sparse matrices, each one for a frame
     # else:
@@ -613,7 +641,7 @@ class SpectrumStream(object):
 
         self.tot_spectrum = self.get_own_spectrum_sum()
         self.tot_stemspec_sparse = self.get_frame_sum()
-        self.tot_stemspec = self.reshape_sparse_matrix(self.tot_stemspec_sparse)
+        self.tot_stemspec = self.reshape_own_sparse_matrix(self.tot_stemspec_sparse)
 
 
     @property
@@ -693,12 +721,19 @@ class SpectrumStream(object):
             return change_compress(toreturn, compress_type = compress_type)
 
 
-    def reshape_sparse_matrix(self, frmdat = None):
+    def reshape_own_sparse_matrix(self, frmdat = None):
         '''Return an intuitive 3D matrix representing one frame that is sliced with indices
         (channel, x, y). If no data is provided, perform on sum of all frames.'''
         if frmdat is None:
             frmdat = self.get_frame_sum(compress_type = "csr")
         return frmdat.T.toarray().reshape(self.cs, self.xs, self.ys)
+
+    @staticmethod
+    def reshape_sparse_matrix(frmdat, dim):
+        '''Return an intuitive 3D matrix representing one frame that is sliced with indices
+        (channel, x, y)'''
+        cs, xs, ys = dim
+        return frmdat.T.toarray().reshape(cs, xs, ys)
 
 
     def save_matrix(self, filename):
@@ -758,6 +793,17 @@ class SpectrumStream(object):
         return fig, ax
 
 
+    def write_streamframes(self, path = "./SpectrumStream/", pre = "Frame"):
+        '''Writes out the spectrumstream frame by frame in the .npz format in a separate folder. Metadata is not written out.
+        Naming convention is Frame(n).npz'''
+        dt = self.get_frame_list()
+        if not os.path.exists(path):
+            os.makedirs(path)
+        for j,i in enumerate(dt):
+            name = "{}{}".format(pre, j)
+            save_npz(path+name, i)
+
+
     def plot_energy_image(self, energy: float, width: float, scale_bar: bool = True, show_fig: bool = True, dpi: int = 100,
     save_meta: bool = True, sb_settings: dict = {"location":'lower right', "color" : 'k', "length_fraction" : 0.15},
     imshow_kwargs: dict = {}, savefile: str = ""):
@@ -793,6 +839,17 @@ class SpectrumStream(object):
         return fig, ax
 
 
+@timeit
+def read_streamframes(path = "./", pre = "Frame"):
+    '''Read in frames from .npz files'''
+    streamdata = []
+    for j, i in enumerate(os.listdir(path)):
+        name = "{}{}.npz".format(pre, j)
+        dt_sparse = load_npz(path+name)
+        streamdata.append(dt_sparse)
+    return streamdata
+
+
 def change_compress(temp, compress_type = "none"):
     #return the right type depending on chosen compression
     if compress_type == 'none':
@@ -817,7 +874,8 @@ def get_scale(metadata):
 @timeit
 def save_all_image_frames(f, det_no: str, name: str, path:str ,
                scale_bar: bool = False, show_fig: bool = False, dpi: int = 100, save_meta: bool = True,
-               sb_settings: dict = {"location":'lower right', "color" : 'k', "length_fraction" : 0.15}, imshow_kwargs: dict = {}):
+               sb_settings: dict = {"location":'lower right', "color" : 'k', "length_fraction" : 0.15},
+               imshow_kwargs: dict = {"cmap" : "Greys_r"}):
     '''
     Shortcut to save all images to separate files
     #add threading to this!
@@ -827,26 +885,31 @@ def save_all_image_frames(f, det_no: str, name: str, path:str ,
     imgdata = get_image_data_det_no(f, det_no)
     toloop = range(imgdata.shape[-1]) #loop over number of frames
 
-    for i in toloop:
+    def todoinloop(i):
         frame = imgdata[:,:,i]
         metadata = get_meta_dict_det_no(f, "Image", det_no = det_no, frame = i)
-        save_single_image(imgdata = frame, filename = f"{path}{name}_{i}.tiff", metadata = metadata,
+        plot_single_image(imgdata = frame,  metadata = metadata, filename = f"{path}{name}_{i}.tiff",
                        scale_bar = scale_bar, show_fig = show_fig, dpi = dpi, save_meta = save_meta,
                        sb_settings = sb_settings, imshow_kwargs = imshow_kwargs)
 
+    with cf.ThreadPoolExecutor() as executor: #perform with threading
+        #create the threads list of translate stream for all frames in loopover
+        [executor.submit(todoinloop, i) for i in toloop]
 
-def save_single_image(imgdata: np.ndarray, filename:str , metadata: dict,
-               scale_bar: bool = True, show_fig: bool = False, dpi: int = 100, save_meta: bool = True,
-               sb_settings: dict = {"location":'lower right', "color" : 'k', "length_fraction" : 0.15}, imshow_kwargs: dict = {}):
+
+def plot_single_image(imgdata: np.ndarray, metadata: dict, filename:str = "",
+               scale_bar: bool = True, show_fig: bool = True, dpi: int = 100, save_meta: bool = True,
+               sb_settings: dict = {"location":'lower right', "color" : 'k', "length_fraction" : 0.15},
+               imshow_kwargs: dict = {}):
     '''
-    Saves a single NxN numpy array representing an image to a TIFF file.
+    Plot a single NxN numpy array representing an image. Potentiallys save to a TIFF file.
 
     Args:
     imgdata (np.ndarray) : the image frame
-    filename (str) : the filename to which you want to save the image
     metadata (dict) : the metadata dictionary corresponding to the file
+    filename (str) : the filename to which you want to save the image. if empty is not saved.
     scale_bar (bool) = True : whether to add a scale bar to the image. Metadata must contain this information.
-    show_fig (bool) = False : whether to show the figure
+    show_fig (bool) = True : whether to show the figure
     dpi (int) = 100 : dpi to save the image with
     save_meta (bool) = True : save the metadata also as a separate json file with the same filename as the image
     sb_settings (dict) = {"location":'lower right', "color" : 'k', "length_fraction" : 0.15}: settings for the scale bar
@@ -860,11 +923,26 @@ def save_single_image(imgdata: np.ndarray, filename:str , metadata: dict,
                    sb_settings = sb_settings,
                    imshow_kwargs = imshow_kwargs)
 
-    fig.savefig(filename, dpi = dpi)
+    if filename:
+        fig.savefig(filename, dpi = dpi)
+        if save_meta:
+            #if metadata save the metadata to a json file with the same name
+            path, ext = os.path.splitext(filename)
+            write_meta_json(path+".json", metadata)
 
-    if save_meta:
-        #if metadata save the metadata to a json file with the same name
-        path, ext = os.path.splitext(filename)
-        write_meta_json(path+".json", metadata)
+    return fig, ax
 
+
+def plot_image_frame(f, det_no, frm = 0, **kwargs):
+    '''
+    Wrapper for plot_single_image
+
+    Args:
+    f: hdf5 file
+    det_no: detector number
+    **kwargs to be passed to plot_single_image
+    '''
+    imdat = get_image_data_det_no(f, det_no)[:,:,frm]
+    metdat = get_meta_dict_det_no(f, "Image", det_no = det_no, frame = frm)
+    fig, ax = plot_single_image(imdat, metdat, **kwargs)
     return fig, ax
