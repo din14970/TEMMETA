@@ -1,5 +1,10 @@
 emdData&Reader
-Testimages
+Testimages*
 Testing
 HAADFSuperX1913_2
-
+*.emd
+test*
+*.png
+*.hdf5
+.ipynb_checkpoints
+__pycache__

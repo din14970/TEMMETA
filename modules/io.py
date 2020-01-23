@@ -873,7 +873,7 @@ def get_scale(metadata):
 
 @timeit
 def save_all_image_frames(f, det_no: str, name: str, path:str ,
-               scale_bar: bool = False, show_fig: bool = False, dpi: int = 100, save_meta: bool = True,
+               scale_bar: bool = True, show_fig: bool = False, dpi: int = 100, save_meta: bool = True,
                sb_settings: dict = {"location":'lower right', "color" : 'k', "length_fraction" : 0.15},
                imshow_kwargs: dict = {"cmap" : "Greys_r"}):
     '''
@@ -885,16 +885,23 @@ def save_all_image_frames(f, det_no: str, name: str, path:str ,
     imgdata = get_image_data_det_no(f, det_no)
     toloop = range(imgdata.shape[-1]) #loop over number of frames
 
-    def todoinloop(i):
+    for i in toloop:
         frame = imgdata[:,:,i]
         metadata = get_meta_dict_det_no(f, "Image", det_no = det_no, frame = i)
         plot_single_image(imgdata = frame,  metadata = metadata, filename = f"{path}{name}_{i}.tiff",
                        scale_bar = scale_bar, show_fig = show_fig, dpi = dpi, save_meta = save_meta,
                        sb_settings = sb_settings, imshow_kwargs = imshow_kwargs)
 
-    with cf.ThreadPoolExecutor() as executor: #perform with threading
-        #create the threads list of translate stream for all frames in loopover
-        [executor.submit(todoinloop, i) for i in toloop]
+    # def todoinloop(i):
+    #     frame = imgdata[:,:,i]
+    #     metadata = get_meta_dict_det_no(f, "Image", det_no = det_no, frame = i)
+    #     plot_single_image(imgdata = frame,  metadata = metadata, filename = f"{path}{name}_{i}.tiff",
+    #                    scale_bar = scale_bar, show_fig = show_fig, dpi = dpi, save_meta = save_meta,
+    #                    sb_settings = sb_settings, imshow_kwargs = imshow_kwargs)
+
+    # with cf.ThreadPoolExecutor() as executor: #perform with threading
+    #     #create the threads list of translate stream for all frames in loopover
+    #     [executor.submit(todoinloop, i) for i in toloop]
 
 
 def plot_single_image(imgdata: np.ndarray, metadata: dict, filename:str = "",
