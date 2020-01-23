@@ -5,6 +5,8 @@ HAADFSuperX1913_2
 *.emd
 test*
 *.png
+*.tiff
+*.json
 *.hdf5
 .ipynb_checkpoints
 __pycache__
