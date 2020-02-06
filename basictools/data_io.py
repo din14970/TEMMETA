@@ -3,6 +3,7 @@
 #Base modules
 import sys
 import os
+import logging
 import concurrent.futures as cf #parrallel tasks
 
 #Basic 3rd party packages
@@ -20,10 +21,9 @@ from matplotlib_scalebar.scalebar import ScaleBar, SI_LENGTH_RECIPROCAL
 import tkinter as Tk
 from tkinter import filedialog
 #my own modules
-sys.path.append(".")
-from .decorators import timeit
-from . import plottingtools as pl
-
+#sys.path.append(".")
+from decorators import timeit
+import plottingtools as pl
 
 def get_file_path_dialog(filetypes: tuple = (("emd files","*.emd"),("all files","*.*"))):
     """
@@ -896,11 +896,10 @@ def get_scale(metadata):
     return pixelsize, pixelunit
 
 
-@timeit
 def save_all_image_frames(f, det_no: str, name: str, path:str ,
                scale_bar: bool = True, show_fig: bool = False, dpi: int = 100, save_meta: bool = True,
                sb_settings: dict = {"location":'lower right', "color" : 'k', "length_fraction" : 0.15},
-               imshow_kwargs: dict = {"cmap" : "Greys_r"}):
+               imshow_kwargs: dict = {"cmap" : "Greys_r"}, cformat: int = None):
     '''
     Shortcut to save all images to separate files
     #add threading to this!
@@ -908,12 +907,23 @@ def save_all_image_frames(f, det_no: str, name: str, path:str ,
     if not os.path.exists(path):
         os.makedirs(path)
     imgdata = get_image_data_det_no(f, det_no)
-    toloop = range(imgdata.shape[-1]) #loop over number of frames
+    framenum = imgdata.shape[-1]
+    toloop = range(framenum) #loop over number of frames
+
+    #set the number of digits in the counter
+    if counter is None:
+        counter = int(np.log10(framenum))+1
+    elif counter<int(np.log10(framenum))+1:
+        logging.error("Insufficient digits to represent the frames")
+        return
+    else:
+        pass #counter is already set to the right value
 
     for i in toloop:
         frame = imgdata[:,:,i]
         metadata = get_meta_dict_det_no(f, "Image", det_no = det_no, frame = i)
-        plot_single_image(imgdata = frame,  metadata = metadata, filename = f"{path}{name}_{i}.tiff",
+        c = str(i).zfill(counter) #the appropriately formatted counter number
+        plot_single_image(imgdata = frame,  metadata = metadata, filename = f"{path}{name}_{c}.tiff",
                        scale_bar = scale_bar, show_fig = show_fig, dpi = dpi, save_meta = save_meta,
                        sb_settings = sb_settings, imshow_kwargs = imshow_kwargs)
 
