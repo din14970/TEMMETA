@@ -11,6 +11,7 @@ from scipy.sparse import csc_matrix, csr_matrix, dok_matrix, vstack, spmatrix
 import matplotlib.pyplot as plt
 from matplotlib_scalebar.scalebar import ScaleBar, SI_LENGTH_RECIPROCAL
 
+sys.path.append(".")
 from . import processing as proc
 
 def plot_quick_spectrum(data: np.ndarray, plot_channels: bool = False, disp: float = 1.):

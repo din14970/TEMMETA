@@ -20,6 +20,7 @@ from matplotlib_scalebar.scalebar import ScaleBar, SI_LENGTH_RECIPROCAL
 import tkinter as Tk
 from tkinter import filedialog
 #my own modules
+sys.path.append(".")
 from .decorators import timeit
 from . import plottingtools as pl
 
@@ -43,6 +44,13 @@ def get_file_path_dialog(filetypes: tuple = (("emd files","*.emd"),("all files",
     return fname
 
 
+def read_emd(filepath: str):
+    """Open an emd file with a given filepath"""
+    try:
+        return h5py.File(filepath, 'r')
+    except:
+        return None
+
 def open_emd_gui():
     """Open a file dialog to select an emd file and return as h5py._hl.files.File"""
 
@@ -53,9 +61,47 @@ def open_emd_gui():
         f = None
     return f
 
-
-def scan_hdf5_node(hdf5_node, recursive: bool = True, full_path: bool = False,
+def scan_node(g, tabs=0, recursive: bool = True,
                    see_info: bool = True, tab_step: int = 4):
+    """Traverse the node. Find all datasets and groups in the file. If recersion is on go deep"""
+    for k, v in g.items():
+        if isinstance(v, h5py.Dataset):
+            name_ds = get_name(v)
+            extra=""
+            if see_info:
+                extra = " ("+str(v.shape)+", "+str(v.dtype)+")"
+            print(' ' * tabs + ' ' * tab_step + ' -', name_ds, extra)
+
+        elif isinstance(v, h5py.Group):
+            name_gr = get_name(v)
+            print(' ' * tabs + ' ' * tab_step + name_gr)
+            if recursive:
+                scan_node(v, tabs=tabs + tab_step)
+
+
+#separate the name of the node from the rest of the path in the file
+def get_name(x, full_path: bool = False):
+    if not full_path:
+        name = x.name.split("/")[-1]
+    else:
+        name = x.name
+    return name
+
+
+def get_emd_tree_view(f):
+    """Flattens out the structure of data inside an EMD file"""
+    tree = {}
+    tree[(0,0)] = ("{}".format(get_name(f)), "EMD")
+    counter = 0
+    for k, v in f["Data"].items():
+        vn = get_name(v)
+        for i, j in v.items():
+            tree[(1, counter)] = (get_name(j), vn)
+            counter += 1
+    return tree
+
+
+def scan_hdf5_node(hdf5_node, full_path: bool = False, **kwargs):
     """
     Print the structure of an HDF5 node (can be root).
 
@@ -66,35 +112,14 @@ def scan_hdf5_node(hdf5_node, recursive: bool = True, full_path: bool = False,
         see_info (bool): print the array size and datatype next to datasets.
         tab_step (int): how many spaces to indent each level
     """
-    #separate the name of the node from the rest of the path in the file
-    def get_name(x):
-        if not full_path:
-            name = x.name.split("/")[-1]
-        else:
-            name = x.name
-        return name
-    #traverse the node. Find all datasets and groups in the file. If recersion is on go deep.
-    def scan_node(g, tabs=0):
-        for k, v in g.items():
-            if isinstance(v, h5py.Dataset):
-                name_ds = get_name(v)
-                extra=""
-                if see_info:
-                    extra = " ("+str(v.shape)+", "+str(v.dtype)+")"
-                print(' ' * tabs + ' ' * tab_step + ' -', name_ds, extra)
-
-            elif isinstance(v, h5py.Group):
-                name_gr = get_name(v)
-                print(' ' * tabs + ' ' * tab_step + name_gr)
-                if recursive:
-                    scan_node(v, tabs=tabs + tab_step)
+    #
     #Get the name of the node. If root then name will be / which we must print separately.
-    root=get_name(hdf5_node)
+    root=get_name(hdf5_node, full_path)
     if root == "":
         print("/")
     else:
         print(root)
-    scan_node(hdf5_node)
+    scan_node(hdf5_node, **kwargs)
 
 
 def get_det_uuid(f: h5py._hl.files.File, sig: str, det_no: int):

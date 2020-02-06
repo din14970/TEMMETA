@@ -10,3 +10,4 @@ test*
 *.hdf5
 .ipynb_checkpoints
 __pycache__
+.venv
