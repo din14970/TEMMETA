@@ -22,8 +22,8 @@ import tkinter as Tk
 from tkinter import filedialog
 #my own modules
 #sys.path.append(".")
-from decorators import timeit
-import plottingtools as pl
+from . import plottingtools as pl
+from .decorators import timeit
 
 def get_file_path_dialog(filetypes: tuple = (("emd files","*.emd"),("all files","*.*"))):
     """
@@ -406,6 +406,26 @@ def get_spectrum_stream_flut(f: h5py._hl.files.File, det: str):
     s = f["Data/SpectrumStream"][det]["FrameLocationTable"][:,0]
     return s
 
+
+def guess_multiframe_dataset(f: h5py._hl.files.File):
+    '''
+    Guess the detector id of the image dataset that corresponds to the spectrumstream
+    Returns the detector number, detector uuid and the number of frames
+    '''
+    #find the detector number of the dataset containing many frames
+    for k, item in enumerate(f["Data"]["Image"].items()):
+        i, j = item
+        img = j["Data"]
+        #if the last dimension is more than 1, we guess this is the good dataset
+        if img.shape[-1]>1:
+            det_no = k
+            det_uuid = i
+            num_frames = img.shape[-1]
+            break
+    else: #no break statement found
+        logging.error("No image dataset found with more than 1 frame.")
+        return
+    return det_no, det_uuid, num_frames
 
 
 def convert_stream_to_sparse(d1d: np.ndarray, dim: tuple, dv: int = 65535, compress_type: str = 'dok'):
@@ -818,14 +838,27 @@ class SpectrumStream(object):
         return fig, ax
 
 
-    def write_streamframes(self, path = "./SpectrumStream/", pre = "Frame"):
+    def write_streamframes(self, path = "./SpectrumStream/", pre = "Frame",
+                            counter = None):
         '''Writes out the spectrumstream frame by frame in the .npz format in a separate folder. Metadata is not written out.
         Naming convention is Frame(n).npz'''
         dt = self.get_frame_list()
         if not os.path.exists(path):
             os.makedirs(path)
+
+        #set the number of digits in the counter
+        mincounter = get_counter(self.num_frames)
+        if counter is None:
+            counter = mincounter
+        elif counter<mincounter:
+            logging.error("Insufficient digits to represent the frames")
+            return
+        else:
+            pass #counter is already set to the right value
+
         for j,i in enumerate(dt):
-            name = "{}{}".format(pre, j)
+            c = str(j).zfill(counter)
+            name = "{}_{}".format(pre, c)
             save_npz(path+name, i)
 
 
@@ -895,11 +928,15 @@ def get_scale(metadata):
     pixelunit=metadata["BinaryResult"]["PixelUnitX"]
     return pixelsize, pixelunit
 
+def get_counter(framenumber):
+    """Calculate the minimum number of digits necessary to identify all frames"""
+    return int(np.log10(framenumber))+1
 
+@timeit
 def save_all_image_frames(f, det_no: str, name: str, path:str ,
                scale_bar: bool = True, show_fig: bool = False, dpi: int = 100, save_meta: bool = True,
                sb_settings: dict = {"location":'lower right', "color" : 'k', "length_fraction" : 0.15},
-               imshow_kwargs: dict = {"cmap" : "Greys_r"}, cformat: int = None):
+               imshow_kwargs: dict = {"cmap" : "Greys_r"}, counter: int = None):
     '''
     Shortcut to save all images to separate files
     #add threading to this!
@@ -911,9 +948,10 @@ def save_all_image_frames(f, det_no: str, name: str, path:str ,
     toloop = range(framenum) #loop over number of frames
 
     #set the number of digits in the counter
+    mincounter = get_counter(framenum)
     if counter is None:
-        counter = int(np.log10(framenum))+1
-    elif counter<int(np.log10(framenum))+1:
+        counter = mincounter
+    elif counter<mincounter:
         logging.error("Insufficient digits to represent the frames")
         return
     else:
@@ -937,6 +975,16 @@ def save_all_image_frames(f, det_no: str, name: str, path:str ,
     # with cf.ThreadPoolExecutor() as executor: #perform with threading
     #     #create the threads list of translate stream for all frames in loopover
     #     [executor.submit(todoinloop, i) for i in toloop]
+
+
+@timeit
+def save_all_spectrum_frames(f, det_no: str = 0, name: str = None,
+                            path:str = "./spectrum/", counter:int = None):
+
+    ss = get_spectrum_stream(f, det_no=det_no, one_matrix = True,
+                            compress_type = "dok", re_all = False)
+
+    ss.write_streamframes(path = path, pre = name, counter = counter)
 
 
 def plot_single_image(imgdata: np.ndarray, metadata: dict, filename:str = "",
