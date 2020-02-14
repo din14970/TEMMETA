@@ -5,6 +5,7 @@ import sys
 import os
 import logging
 import concurrent.futures as cf #parrallel tasks
+from datetime import datetime
 
 #Basic 3rd party packages
 import h5py
@@ -293,7 +294,7 @@ def get_meta_dict(f: h5py._hl.files.File, sig: str, det: str, frame: int = 0) ->
         return meta_dict
 
 
-def get_meta_dict_det_no(f: h5py._hl.files.File, sig: str, det_no: int=0, frame: int = 0):
+def get_meta_dict_det_no(f: h5py._hl.files.File , sig: str, det_no: int=0, frame: int = 0):
     """
     Wrapper for importing EMD metadata from the a subgroup. The typ subgroup must be specified
     as an element of ["Image", "Line", "Spectrum", "SpectrumImage", "Spectrumstream"]
@@ -310,6 +311,66 @@ def get_meta_dict_det_no(f: h5py._hl.files.File, sig: str, det_no: int=0, frame:
     """
     det = get_det_uuid(f, sig, det_no)
     return get_meta_dict(f, sig, det, frame)
+
+
+def create_simple_metadata_emd(f, save_file = None, det_no = None, det_no_spec = 0):
+    """
+    Creates a simplified metadata format to work with STEM-EDX datasets.
+
+    Args:
+        f: (h5py._hl.files.File): the HDF5 file opened with h5py.File
+        save_file (str): Optional path to a JSON file where the file is written to.
+        det_no (int):  The detector number of the image frame dataset, which is translated to a UUID str.
+        Defaults to None; the detector will be guessed.
+        det_no_spec (int): The detector number of the SpectrumStream. Defaults to 0, the first SpectrumStream.
+
+    Returns:
+        dict
+    """
+    if not det_no:
+        det_no, det_uuid, num_frames = guess_multiframe_dataset(f)
+    #first get the main metadata
+    emdict = get_meta_dict_det_no(f, "Image", det_no)
+    #then get the aquisition metadata
+    thereisspectra = True
+    try:
+        acq = get_spectrum_stream_acqset(f, get_det_uuid(f, "SpectrumStream", det_no_spec))
+        mds = get_meta_dict_det_no(f, "SpectrumStream", det_no_spec)
+    except:
+        logging.info("No SpectrumStream found in this dataset")
+        thereisspectra = False
+
+    metadata = {}
+    metadata["OriginalFilePath"] = f.filename
+    metadata["DateTime"] = datetime.fromtimestamp(int(emdict["Acquisition"]["AcquisitionStartDatetime"]["DateTime"])).isoformat()
+    metadata["Scan"] = {"Width": {
+                                    "Pixels": int(emdict["Scan"]["ScanSize"]["width"]),
+                                    "PixelSize": float(emdict["BinaryResult"]["PixelSize"]["width"])*1e9,
+                                    "PixelSize_Units": "nm",
+                                },
+                        "Height": {
+                                    "Pixels": int(emdict["Scan"]["ScanSize"]["height"]),
+                                    "PixelSize": float(emdict["BinaryResult"]["PixelSize"]["height"])*1e9,
+                                    "PixelSize_Units": "nm",
+                                },
+                        "NumberOfFrames": num_frames,}
+    if thereisspectra:
+        metadata["EDX"]={"Channels": int(acq["bincount"]),
+                         "Dispersion": float(get_detector_property(mds, "Dispersion"))/1000,
+                         "Dispersion_Unit": "keV",
+                         "EnergyOffset": float(get_detector_property(mds, "OffsetEnergy"))/1000,
+                         "EnergyOffset_Unit": "keV",
+                         "BeginEnergy": float(get_detector_property(mds, "BeginEnergy"))/1000,
+                         "BeginEnergy_Unit": "keV",
+                        }
+
+    if save_file:
+        try:
+            write_meta_json(save_file, metadata)
+        except:
+            logging.error("Failed to write out the metadata to file {}".format(save_file))
+
+    return metadata
 
 
 def get_pretty_meta_str(meta_dict: dict)->str:
@@ -776,9 +837,9 @@ class SpectrumStream(object):
     @staticmethod
     def reshape_sparse_matrix(frmdat, dim):
         '''Return an intuitive 3D matrix representing one frame that is sliced with indices
-        (channel, x, y)'''
+        (channel, y, x)'''
         cs, xs, ys = dim
-        return frmdat.T.toarray().reshape(cs, xs, ys)
+        return frmdat.T.toarray().reshape(cs, ys, xs)
 
 
     def save_matrix(self, filename):
@@ -932,6 +993,37 @@ def get_counter(framenumber):
     """Calculate the minimum number of digits necessary to identify all frames"""
     return int(np.log10(framenumber))+1
 
+
+@timeit
+def export_all_image_frames(f, det_no: str, name: str, path:str, counter: int = None):
+    '''
+    Only exports all the image frames, no processing or scale bars.
+    Exports as grayscale TIFFS
+    '''
+    if not os.path.exists(path):
+        os.makedirs(path)
+    imgdata = get_image_data_det_no(f, det_no)
+    framenum = imgdata.shape[-1]
+    toloop = range(framenum) #loop over number of frames
+
+    #set the number of digits in the counter
+    mincounter = get_counter(framenum)
+    if counter is None:
+        counter = mincounter
+    elif counter<mincounter:
+        logging.error("Insufficient digits to represent the frames")
+        return
+    else:
+        pass #counter is already set to the right value
+
+    for i in toloop:
+        frame = imgdata[:,:,i]
+        c = str(i).zfill(counter) #the appropriately formatted counter number
+        img = Image.fromarray(frame)
+        img.save(f"{path}{name}_{c}.png")
+        #plt.imsave(f"{path}{name}_{c}.tiff", frame, cmap = 'gray')
+
+
 @timeit
 def save_all_image_frames(f, det_no: str, name: str, path:str ,
                scale_bar: bool = True, show_fig: bool = False, dpi: int = 100, save_meta: bool = True,
@@ -939,7 +1031,7 @@ def save_all_image_frames(f, det_no: str, name: str, path:str ,
                imshow_kwargs: dict = {"cmap" : "Greys_r"}, counter: int = None):
     '''
     Shortcut to save all images to separate files
-    #add threading to this!
+    The images will be saved as RGB TIFFS!
     '''
     if not os.path.exists(path):
         os.makedirs(path)
