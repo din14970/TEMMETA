@@ -3,6 +3,7 @@
 #Base modules
 import sys
 import os
+import re
 import logging
 import concurrent.futures as cf #parrallel tasks
 from datetime import datetime
@@ -994,11 +995,65 @@ def get_counter(framenumber):
     return int(np.log10(framenumber))+1
 
 
+def normalize_convert(img, type="uint8", min=None, max=None):
+    """
+    Rescales an array so that the minimum and maximum correspond to a certain bit value
+    Only unsigned integers are accepted
+
+    Args:
+    img (np.ndarray): the image
+    type (str): output type (options: "uint8", "uint16", "uint32", "uint64").
+                Defaults to "uint8"
+    min (int): the value in the img to map to the minimum. Everything below is set to minimum.
+                Defaults to the minimum value in the array.
+    max (int): the value in the img to map to the maximum. Everything above is set to maximum.
+                Defaults to the maximum value in the array.
+    """
+    bits = re.findall(r"uint([0-9]+)",type.strip())[0]
+    try:
+        bits = int(bits)
+    except:
+        logging.error("Non recognized data type")
+        return
+
+    if bits==8 or bits==16 or bits==32 or bits==64:
+        pass
+    else:
+        logging.error("Non recognized data type")
+        return
+
+    new_min = 0
+    new_max = 2**bits-1
+
+    stmin = img.min()
+    stmax = img.max()
+    if min is None:
+        min = stmin
+    else:
+        img[img<min]=min #everything below min is set to min
+    if max is None:
+        max = stmax
+    else:
+        img[img>max]=max #everything above max is set to max
+
+    a = (new_max-new_min)/(max-min)
+
+    img_new =np.round( a*(img-min)+new_min)
+    return img_new.astype(type)
+
 @timeit
-def export_all_image_frames(f, det_no: str, name: str, path:str, counter: int = None):
+def export_all_image_frames(f, det_no: str, name: str, path:str, counter: int = None, **kwargs):
     '''
     Only exports all the image frames, no processing or scale bars.
-    Exports as grayscale TIFFS
+    Exports as grayscale PNGS
+
+    Args:
+    f (h5py.Dataset):  the opened hdf5 emd file
+    det_no (int): the detector number for the frames dataset
+    name (str):   name prefix for the images to write out
+    path (str):   the folder where the images will be written to
+    counter (int): the number of digits in the counter
+    **kwargs: optional kwargs to pass to normalize_convert: min, max, type
     '''
     if not os.path.exists(path):
         os.makedirs(path)
@@ -1019,6 +1074,7 @@ def export_all_image_frames(f, det_no: str, name: str, path:str, counter: int = 
     for i in toloop:
         frame = imgdata[:,:,i]
         c = str(i).zfill(counter) #the appropriately formatted counter number
+        frame = normalize_convert(frame, **kwargs)
         img = Image.fromarray(frame)
         img.save(f"{path}{name}_{c}.png")
         #plt.imsave(f"{path}{name}_{c}.tiff", frame, cmap = 'gray')
