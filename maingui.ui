@@ -9,8 +9,8 @@
    <rect>
     <x>0</x>
     <y>0</y>
-    <width>1086</width>
-    <height>655</height>
+    <width>1022</width>
+    <height>541</height>
    </rect>
   </property>
   <property name="sizePolicy">
@@ -58,13 +58,23 @@
         <number>1</number>
        </property>
        <item>
-        <widget class="QTreeView" name="treeView">
+        <widget class="QTreeWidget" name="treeWidget">
          <property name="sizePolicy">
           <sizepolicy hsizetype="Minimum" vsizetype="Expanding">
            <horstretch>0</horstretch>
            <verstretch>0</verstretch>
           </sizepolicy>
          </property>
+         <column>
+          <property name="text">
+           <string>File</string>
+          </property>
+         </column>
+         <column>
+          <property name="text">
+           <string>Type</string>
+          </property>
+         </column>
         </widget>
        </item>
        <item>
@@ -77,8 +87,8 @@
            <rect>
             <x>0</x>
             <y>0</y>
-            <width>823</width>
-            <height>627</height>
+            <width>759</width>
+            <height>513</height>
            </rect>
           </property>
          </widget>
@@ -94,7 +104,7 @@
     <rect>
      <x>0</x>
      <y>0</y>
-     <width>1086</width>
+     <width>1022</width>
      <height>22</height>
     </rect>
    </property>
