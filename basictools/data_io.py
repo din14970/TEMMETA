@@ -855,7 +855,7 @@ class SpectrumStream(object):
         '''Return an intuitive 3D matrix representing one frame that is sliced with indices
         (channel, x, y). If no data is provided, perform on sum of all frames.'''
         if frmdat is None:
-            frmdat = self.get_frame_sum(compress_type = "csr")
+            frmdat = self.get_frame_sum(comp_type = "csr")
         return frmdat.T.toarray().reshape(self.cs, self.xs, self.ys)
 
     @staticmethod
