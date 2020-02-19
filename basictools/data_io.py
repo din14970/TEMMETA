@@ -103,6 +103,29 @@ def get_emd_tree_view(f):
     return tree
 
 
+def print_simple_structure(f):
+    for k, v in f["Data"].items():
+        if k=="Image":
+            print("-"*30)
+            print("-"*8+f"{k} datasets"+"-"*8)
+            print("-"*30)
+            for c, (i, j) in enumerate(v.items()):
+                ds = j["Data"]
+                sp = ds.shape
+                dt = ds.dtype
+                print(f"Detector number: {c}, UUID: {i}, Shape: {sp[0]}x{sp[1]}, Frames: {sp[2]}, Data type: {dt}, min:{np.min(ds[:,:,0])}, max:{np.max(ds[:,:,0])}")
+        if k=="SpectrumStream":
+            print("-"*39)
+            print("-"*8+f"{k} datasets"+"-"*8)
+            print("-"*39)
+            for c, (i, j) in enumerate(v.items()):
+                ds = j["Data"]
+                sp = ds.shape
+                dt = ds.dtype
+                print(f"Detector number: {c}, UUID: {i}, Length: {sp[0]}, Data type: {dt}")
+    print("-"*30)
+
+
 def scan_hdf5_node(hdf5_node, full_path: bool = False, **kwargs):
     """
     Print the structure of an HDF5 node (can be root).
@@ -1036,6 +1059,8 @@ def normalize_convert(img, type="uint8", min=None, max=None):
     else:
         img[img>max]=max #everything above max is set to max
 
+    if min==max:
+        print(f"The minimum and maximum are both {max}")
     a = (new_max-new_min)/(max-min)
 
     img_new =np.round( a*(img-min)+new_min)
