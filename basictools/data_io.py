@@ -26,6 +26,7 @@ from tkinter import filedialog
 #sys.path.append(".")
 from . import plottingtools as pl
 from .decorators import timeit
+from pathlib import Path
 
 def get_file_path_dialog(filetypes: tuple = (("emd files","*.emd"),("all files","*.*"))):
     """
@@ -944,7 +945,7 @@ class SpectrumStream(object):
         for j,i in enumerate(dt):
             c = str(j).zfill(counter)
             name = "{}_{}".format(pre, c)
-            save_npz(path+name, i)
+            save_npz(str(Path(f"{path}/{name}")), i)
 
 
     def plot_energy_image(self, energy: float, width: float, scale_bar: bool = True, show_fig: bool = True, dpi: int = 100,
@@ -1101,7 +1102,7 @@ def export_all_image_frames(f, det_no: str, name: str, path:str, counter: int = 
         c = str(i).zfill(counter) #the appropriately formatted counter number
         frame = normalize_convert(frame, **kwargs)
         img = Image.fromarray(frame)
-        img.save(f"{path}{name}_{c}.png")
+        img.save(str(Path(f"{path}/{name}_{c}.png")))
         #plt.imsave(f"{path}{name}_{c}.tiff", frame, cmap = 'gray')
 
 
