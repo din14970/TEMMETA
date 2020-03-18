@@ -1,45 +1,46 @@
-#!/usr/bin/python3.7
-
 """
-This function computes the Fast Fourier Transform (FFT) of a high
-resolution image, applies a gaussian filter, adjusts the intensity
-threshold and cuts out the central region of interest. This function
-can be called from any other script.
+Functions related to calculating FFTs of images.
 
-Input: a 2d image, the kernel size of the gaussian filter (needs to
-be odd) and the sigma value. k_size is typically 7 or 9, sigma 4.
-
-Output: the smoothed FFT of the image fft_blur
+Functions
+---------
+fft2_image
+    Create a filtered and intensity scaled power spectrum of an image
 """
 
 # Libraries
 import numpy as np
-from scipy.ndimage import convolve
-# import argparse
+from .image_filters import gauss_filter
+# import argparse - TODO
 
 
-def matlab_style_gauss2D(shape=(3, 3), sigma=0.5):
-    """
-    2D gaussian mask - should give the same result as MATLAB's
-    fspecial('gaussian',[shape],[sigma])
-    """
-    m, n = [(ss-1.)/2. for ss in shape]
-    y, x = np.ogrid[-m:m+1, -n:n+1]
-    h = np.exp(-(x*x + y*y) / (2.*sigma*sigma))
-    h[h < np.finfo(h.dtype).eps*h.max()] = 0
-    sumh = h.sum()
-    if sumh != 0:
-        h /= sumh
-    return h
+def fft2_image(image, k_size=7, sigma=4., cs=20., crop_factor=3):
+    '''
+    Computer quality FFT of image
 
+    This function computes the Fast Fourier Transform (FFT) of a high
+    resolution image, applies a gaussian filter, adjusts the intensity
+    threshold (the central spot is always extremely intense) and crops
+    out the central region of interest.
 
-def gausfilter(arr, ks=7, sig=4):
-    kernel = matlab_style_gauss2D(shape=(ks, ks), sigma=sig)
-    return convolve(arr, kernel, mode="constant", cval=0)
+    Parameters
+    ----------
+    image : 2D array like object
+        The 2d image
+    k_size : int, optional
+        The kernel size of the gaussian filter. Needs to
+        be odd. Default is 7.
+    sigma : float, optional
+        Sigma of the Gaussian. Default is 4.0.
+    cs: float, optional
+        Mask radius for automatic intensity scaling. Default is 20.0.
+    crop_factor: float, optional
+        1/crop_factor of the image is used centered around the middle
 
-
-def fft2_image(image, k_size=7, sigma=4, cs=20, crop_factor=3):
-
+    Returns
+    -------
+    fft_blur : 2D numpy array
+        The filtered Fourrier spectrum image. In fact it is a power spectrum.
+    '''
     image = np.array(image)
 
     assert k_size % 2 == 1, "kernel size must be odd!"
@@ -52,7 +53,7 @@ def fft2_image(image, k_size=7, sigma=4, cs=20, crop_factor=3):
     fft2_db = 20 * np.log10(np.abs(fft2_shift))  # power spectrum? use log10
 
     # Smooth FFT with gaussian filter: k_size has to be odd!
-    fft2_blur = gausfilter(fft2_db, k_size, sigma)
+    fft2_blur = gauss_filter(fft2_db, k_size, sigma)
 
     # Make mask to boost contrast and only show central part of FFT
     (Nx, Ny) = fft2_db.shape
@@ -67,8 +68,10 @@ def fft2_image(image, k_size=7, sigma=4, cs=20, crop_factor=3):
     # normalize but don't consider very intense central disk
     fft2_blur[fft2_blur > 1] = 1  # linear cut off
     crop_factor = crop_factor*2
-    fft2_blur = fft2_blur[Nx//2-Nx//crop_factor:Nx//2+Nx//crop_factor,
-                          Ny//2-Ny//crop_factor:Ny//2+Ny//crop_factor]
+    xbound = int(round(Nx/crop_factor))
+    ybound = int(round(Ny/crop_factor))
+    fft2_blur = fft2_blur[Nx//2-xbound:Nx//2+xbound,
+                          Ny//2-ybound:Ny//2+ybound]
 
     return fft2_blur
 
