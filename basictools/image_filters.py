@@ -30,6 +30,11 @@ suppress_outliers
 import numpy as np
 from scipy.ndimage import median_filter, convolve
 from PIL import Image
+import logging
+
+# Initialize the Logger
+logger = logging.getLogger(__name__)
+logger.setLevel(logging.DEBUG)
 
 
 def normalize(arr):
@@ -103,18 +108,71 @@ def linscale(arr, min=None, max=None, nmin=0, nmax=1, dtype=np.float):
     array([[1, 1],
            [2, 2]], dtype=uint8)
     """
+    workarr = arr.copy()
     if min is None:
-        min = arr.min()
+        min = workarr.min()
     else:
-        arr[arr < min] = min
+        workarr[workarr < min] = min
     if max is None:
-        max = arr.max()
+        max = workarr.max()
     else:
-        arr[arr > max] = max
+        workarr[workarr > max] = max
 
     a = (nmax-nmin)/(max-min)
-    result = (arr-min)*a+nmin
+    result = (workarr-min)*a+nmin
     return result.astype(dtype)
+
+
+def _get_dtype_min_max(dtype):
+    """
+    Return (min, max) of a numpy integer or float dtype
+
+    For floats it just returns 0 and 1
+    """
+    if dtype == np.float or dtype == np.float32 or dtype == np.float64:
+        max = 1  # np.finfo(dtype).max
+        min = 0  # np.finfo(dtype).min
+    elif (dtype == np.int8 or dtype == np.uint8 or
+          dtype == np.int16 or dtype == np.uint16 or
+          dtype == np.int32 or dtype == np.uint32 or
+          dtype == np.int64 or dtype == np.uint64):
+        max = np.iinfo(dtype).max
+        min = np.iinfo(dtype).min
+    else:
+        raise ValueError("Unrecognized or unsupported type: {dtype}")
+    return (min, max)
+
+
+def normalize_convert(img, min=None, max=None, dtype=np.uint8):
+    """
+    Linscales an array and converts dtype
+
+    Only unsigned integer dtypes are accepted
+
+    Parameters
+    ----------
+    img : array
+        The 2D image
+    dtype : numpy.dtype, optional
+        output type (options: numpy int and float types).
+        Defaults to np.uint8. If any kind of float is chosen
+        the image is renormalized to between 0 and 1.
+    min : int, optional
+        the value in the img to map to the minimum. Everything
+        below is set to minimum. Defaults to the minimum value
+        in the array.
+    max : int, optional
+        the value in the img to map to the maximum. Everything
+        above is set to maximum. Defaults to the maximum value
+        in the array.
+
+    Returns
+    -------
+    img_new : array
+        The rescaled and retyped image
+    """
+    nmin, nmax = _get_dtype_min_max(dtype)
+    return linscale(img, min, max, nmin, nmax, dtype)
 
 
 def scale_std(arr, numstd=3):
@@ -200,7 +258,7 @@ def _matlab_style_gauss2D(shape=(3, 3), sigma=0.5):
     return h
 
 
-def gauss_filter(arr, ks=7, sig=4.):
+def gauss_filter(arr, ks=7, sig=4., cval=0):
     """
     Apply Gaussian kernel filter on image
 
@@ -214,6 +272,9 @@ def gauss_filter(arr, ks=7, sig=4.):
         The kernel size. Default is 7.
     sig : float, optional
         The Gaussian standard deviation. Default is 4.
+    cval : float, optional
+        the constant value to assume beyond the border of the image.
+        Defaults to 0.
 
     Returns
     -------
@@ -221,7 +282,7 @@ def gauss_filter(arr, ks=7, sig=4.):
         filtered image
     """
     kernel = _matlab_style_gauss2D(shape=(ks, ks), sigma=sig)
-    return convolve(arr, kernel, mode="constant", cval=0)
+    return convolve(arr, kernel, mode="constant", cval=cval)
 
 
 def med_filter(arr, ks=5):
@@ -340,8 +401,8 @@ def bw_filter(image, inc=100, order=8):
 
     Returns
     -------
-    result : numpy array with dtype float
-        The Butterworth-filtered image. Normalized between 0 and 1.
+    result : numpy array
+        The Butterworth-filtered image.
 
     See also
     --------
@@ -349,6 +410,7 @@ def bw_filter(image, inc=100, order=8):
     """
     # Make sure the image is an array
     image = np.array(image)
+    original_dtype = image.dtype
     # Subtract mean value from image
     (Nx, Ny) = image.shape
     image = image - np.mean(image)
@@ -383,7 +445,7 @@ def bw_filter(image, inc=100, order=8):
 
     butterfilt = np.real(np.fft.ifft2(np.fft.fft2(image) * wfilt))
 
-    return normalize(butterfilt)
+    return normalize_convert(butterfilt, dtype=original_dtype)
 
 
 def bin2(a, factor, resample=Image.NEAREST):
@@ -407,7 +469,7 @@ def bin2(a, factor, resample=Image.NEAREST):
     binned : array-like
         The binned image
     """
-    assert len(a.shape) == 2
+    assert a.ndim == 2, "Number of dimensions is incorrect"
     # binned = imresize(a, (a.shape[0]//factor, a.shape[1]//factor))
     binned = np.array(
         Image.fromarray(a).resize(size=(a.shape[0]//factor,
