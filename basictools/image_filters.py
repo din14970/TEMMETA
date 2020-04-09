@@ -31,6 +31,8 @@ import numpy as np
 from scipy.ndimage import median_filter, convolve
 from PIL import Image
 import logging
+# import concurrent.futures as cf
+from multiprocessing import Pool, cpu_count
 
 # Initialize the Logger
 logger = logging.getLogger(__name__)
@@ -471,9 +473,10 @@ def bin2(a, factor, resample=Image.NEAREST):
     """
     assert a.ndim == 2, "Number of dimensions is incorrect"
     # binned = imresize(a, (a.shape[0]//factor, a.shape[1]//factor))
+    newx = int(a.shape[0]/factor)
+    newy = int(a.shape[1]/factor)
     binned = np.array(
-        Image.fromarray(a).resize(size=(a.shape[0]//factor,
-                                        a.shape[1]//factor),
+        Image.fromarray(a).resize(size=(newx, newy),
                                   resample=resample))
     return binned
 
@@ -509,3 +512,42 @@ def bin2_simple(a, factor):
     f = factor * factor
     binned = np.sum(np.sum(np.reshape(a, tmpshape), 1), 2) / f
     return binned
+
+
+class Filter(object):
+    """A pickle-able wrapper for using filters with multiprocessing"""
+    def __init__(self, func, *args, **kwargs):
+        self.func = func
+        self.args = args
+        self.kwargs = kwargs
+
+    def __call__(self, img):
+        return self.func(img, *self.args, **self.kwargs)
+
+
+def apply_filter_to_stack(arr, func, *args,
+                          multiprocessing=False, **kwargs):
+    """
+    Dumb loop over image stack frames and apply a filter
+
+    Func should returns another image from the image and these should
+    be stackable into a new 3D array stack.
+    """
+    assert arr.ndim == 3, "Must provide a valid image stack"
+
+    toloop = np.arange(arr.shape[0])
+
+    if multiprocessing:
+        frames = [arr[i] for i in toloop]
+        try:
+            workers = cpu_count()
+        except NotImplementedError:
+            workers = 1
+        pool = Pool(processes=workers)
+        new_stack = pool.map(Filter(func, *args, **kwargs),
+                             frames)
+    else:
+        new_stack = [func(arr[i], *args, **kwargs)
+                     for i in toloop]
+
+    return np.array(new_stack)

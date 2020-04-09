@@ -298,11 +298,11 @@ def plot_array(imgdata, pixelsize=1., pixelunit="", scale_bar=True,
     # initialize the figure and axes objects
     if not show_fig:
         plt.ioff()
-    # change cm units into inches
     if dpi is not None:
         fig = plt.figure(frameon=False,
                          figsize=(imgdata.shape[1]/dpi, imgdata.shape[0]/dpi))
     else:
+        # change cm units into inches
         width = width*0.3937008
         height = width/imgdata.shape[1]*imgdata.shape[0]
         fig = plt.figure(frameon=False,
@@ -415,7 +415,7 @@ def plot_stack(stack):
     fig, ax = plt.subplots(figsize=(8, 6))
     plt.subplots_adjust(bottom=0.25, left=-0.1)
 
-    frammax = stack.data.shape[0]
+    frammax = stack.data.shape[0]-1
     intmax = np.max(stack.data)
     intmin = np.min(stack.data)
 

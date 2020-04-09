@@ -1692,6 +1692,39 @@ class Profile(TEMDataSet):
         gg.to_excel(str(Path(filepath)))
 
 
+def _correct_crop_window(x1, y1, x2, y2, imw, imh, nearest_power):
+    x1 = int(x1)
+    x2 = int(x2)
+    y1 = int(y1)
+    y2 = int(y2)
+    if nearest_power:
+        w = x2-x1
+        h = y2-y1
+        toround = max(abs(w), abs(h))
+        n1 = np.floor(np.log2(toround))
+        n2 = n1+1
+        mid = (2**n1+2**n2)//2
+        if toround < mid:
+            s = 2**n1
+        else:
+            s = 2**n2
+        x2 = int(x1+s*np.sign(w))
+        y2 = int(y1+s*np.sign(h))
+    # we need to flip indices if order is not correct
+    if x2 < x1:
+        x2, x1 = x1, x2
+    if y2 < y1:
+        y2, y1 = y1, y2
+    # checkvalidity of indices
+    for i in [x1, x2]:
+        if i < 0 or i > imw:
+            raise ValueError(f"{i} is out of bounds")
+    for i in [y1, y2]:
+        if i < 0 or i > imh:
+            raise ValueError(f"{i} is out of bounds")
+    return x1, y1, x2, y2
+
+
 def create_new_image(arr, pixelsize, pixelunit, parent=None, process=None):
     """
     Create a GeneralImage object from an array, pixelsize and pixelunit
@@ -1881,35 +1914,9 @@ class GeneralImage(TEMDataSet):
         img : GeneralImage or None if inplace
             cropped image
         """
-        x1 = int(x1)
-        x2 = int(x2)
-        y1 = int(y1)
-        y2 = int(y2)
-        if nearest_power:
-            w = x2-x1
-            h = y2-y1
-            toround = max(abs(w), abs(h))
-            n1 = np.floor(np.log2(toround))
-            n2 = n1+1
-            mid = (2**n1+2**n2)//2
-            if toround < mid:
-                s = 2**n1
-            else:
-                s = 2**n2
-            x2 = int(x1+s*np.sign(w))
-            y2 = int(y1+s*np.sign(h))
-        # we need to flip indices if order is not correct
-        if x2 < x1:
-            x2, x1 = x1, x2
-        if y2 < y1:
-            y2, y1 = y1, y2
-        # checkvalidity of indices
-        for i in [x1, x2]:
-            if i < 0 or i > self.width:
-                raise ValueError(f"{i} is out of bounds")
-        for i in [y1, y2]:
-            if i < 0 or i > self.height:
-                raise ValueError(f"{i} is out of bounds")
+        x1, y1, x2, y2 = _correct_crop_window(x1, y1, x2, y2,
+                                              self.width, self.height,
+                                              nearest_power)
         data = self.data[y1:y2, x1:x2].copy()
         process = f"Cropped between x={x1}-{x2} and y={y1}-{y2}"
         return self._create_child_image(inplace, data, self.pixelsize,
@@ -2074,7 +2081,7 @@ class GeneralImage(TEMDataSet):
                                           self.pixelunit,
                                           parent=self, process=process)
         process = "Calculated a GPA map: omega_xy component."
-        omega_xy = (exy+eyx)/2
+        omega_xy = (exy-eyx)/2
         im_oxy = self._create_child_image(False, omega_xy, self.pixelsize,
                                           self.pixelunit,
                                           parent=self, process=process)
@@ -3026,10 +3033,46 @@ class GeneralImageStack(TEMDataSet):
         """Plot the stack of images with a slider to go between frames"""
         pl.plot_stack(self)
 
-    def apply_filter(self, filter, inplace=True, multiprocessing=True,
-                     *args, **kwargs):
-        """Apply a filter to all images"""
-        pass
+    def apply_filter(self, filt, *args, inplace=False, multiprocessing=False,
+                     **kwargs):
+        """
+        Apply a filter to all images in the stack
+
+        Parameters
+        ----------
+        filt : callable
+            Filter function to be applied to the images. Must take in the
+            image frame as a first argument and return another 2D array.
+        inplace : bool, optional
+            Whether to update the data inside the object or create a new
+            imagestack object. Default is create a new object.
+        multiprocessing : bool, optional
+            Whether to use multiple cores to perform the operation. If False
+            a simple loop is used to go over all the frames. If true a
+            tasks are put in a multiprocessing pool. Behavior can be a bit
+            shaky and sometimes slower than the simple loop. Default is to
+            use only one core.
+
+        Other parameters
+        ----------------
+        args, kwargs : passed directly to the filt function.
+        """
+        data = imf.apply_filter_to_stack(self.data, filt, *args,
+                                         multiprocessing=multiprocessing,
+                                         **kwargs)
+        process = {
+                    "filter": {
+                        "name": filt.__name__,
+                        "arguments": list(args),
+                        "keyword_arguments": {**kwargs}
+                    }
+                }
+        logger.warning("The pixel size and unit of the original images were "
+                       "used. The scale may no longer be correct. Please "
+                       "verify and use set_scale.")
+        return self._create_child_stack(inplace, data, self.pixelsize,
+                                        self.pixelunit,
+                                        parent=self, process=process)
 
     def get_frame(self, frame_index):
         """Return a single frame as an GeneralImage object"""
@@ -3049,7 +3092,7 @@ class GeneralImageStack(TEMDataSet):
         data = self.data.sum(axis=0)
         # Rescale to turn it back into the same datatype as before
         data = imf.normalize_convert(data, dtype=dt)
-        process = f"Averaged all frames"
+        process = f"Averaged all frames in stack"
         nimg = create_new_image(data, self.pixelsize, self.pixelunit, self,
                                 process)
         return nimg
@@ -3062,19 +3105,48 @@ class GeneralImageStack(TEMDataSet):
         else:
             return newstack
 
-    def crop(self, x1, y1, x2, y2, inplace=False):
+    def crop(self, x1, y1, x2, y2, inplace=False, nearest_power=False):
         """
         Select a rectangle defined by two points and return a new image stack
         """
+        x1, y1, x2, y2 = _correct_crop_window(x1, y1, x2, y2,
+                                              self.width, self.height,
+                                              nearest_power)
         data = self.data[:, y1:y2, x1:x2].copy()
         process = f"Cropped between x={x1}-{x2} and y={y1}-{y2}"
         return self._create_child_stack(inplace, data, self.pixelsize,
                                         self.pixelunit,
                                         parent=self, process=process)
 
+    def rebin(self, factor, inplace=False, multiprocessing=False, **kwargs):
+        """Rebin the images in a stack by a certain factor"""
+        data = imf.apply_filter_to_stack(self.data, imf.bin2, factor,
+                                         multiprocessing=multiprocessing,
+                                         **kwargs)
+        # update factor if non-divisor was used
+        factor = (self.data.shape[-1])/(data.shape[-1])
+        process = f"Binned by a factor of {factor}"
+        newpixelsize = self.pixelsize*factor
+        return self._create_child_stack(inplace, data, newpixelsize,
+                                        self.pixelunit,
+                                        parent=self, process=process)
+
+    def linscale(self, min, max, inplace=False):
+        """
+        Change the minimum and maximum intensity values
+
+        The dtype of the image remains the same
+        """
+        data = imf.normalize_convert(self.data, min, max,
+                                     dtype=self.data.dtype)
+        process = f"Scaled intensity between {min} and {max}"
+        return self._create_child_stack(inplace, data, self.pixelsize,
+                                        self.pixelunit,
+                                        parent=self, process=process)
+
     def select_frames(self, frames, inplace=False):
         """
-        Select a number of frames
+        Select a list of frames
         """
         data = self.data[frames, :, :]
         process = f"Selected frames {frames}"
@@ -3083,7 +3155,10 @@ class GeneralImageStack(TEMDataSet):
                                         parent=self, process=process)
 
     def exclude_frames(self, frames, inplace=False):
-        data = np.delete(self.data, frames)
+        """
+        Exclude a list of frames
+        """
+        data = np.delete(self.data, frames, axis=0)
         process = f"Excluded frames {frames}"
         return self._create_child_stack(inplace, data, self.pixelsize,
                                         self.pixelunit,
