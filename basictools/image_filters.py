@@ -145,7 +145,7 @@ def _get_dtype_min_max(dtype):
     return (min, max)
 
 
-def normalize_convert(img, min=None, max=None, dtype=np.uint8):
+def normalize_convert(img, min=None, max=None, dtype=None):
     """
     Linscales an array and converts dtype
 
@@ -157,7 +157,8 @@ def normalize_convert(img, min=None, max=None, dtype=np.uint8):
         The 2D image
     dtype : numpy.dtype, optional
         output type (options: numpy int and float types).
-        Defaults to np.uint8. If any kind of float is chosen
+        Defaults to the same datatype as the image.
+        If any kind of float is chosen
         the image is renormalized to between 0 and 1.
     min : int, optional
         the value in the img to map to the minimum. Everything
@@ -173,6 +174,8 @@ def normalize_convert(img, min=None, max=None, dtype=np.uint8):
     img_new : array
         The rescaled and retyped image
     """
+    if dtype is None:
+        dtype = img.dtype
     nmin, nmax = _get_dtype_min_max(dtype)
     return linscale(img, min, max, nmin, nmax, dtype)
 
@@ -543,9 +546,8 @@ def apply_filter_to_stack(arr, func, *args,
             workers = cpu_count()
         except NotImplementedError:
             workers = 1
-        pool = Pool(processes=workers)
-        new_stack = pool.map(Filter(func, *args, **kwargs),
-                             frames)
+        with Pool(processes=workers) as pool:
+            new_stack = pool.map(Filter(func, *args, **kwargs), frames)
     else:
         new_stack = [func(arr[i], *args, **kwargs)
                      for i in toloop]
