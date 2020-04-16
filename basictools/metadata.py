@@ -151,6 +151,34 @@ class Metadata(DotDict):
     def __repr__(self):
         return jt.get_pretty_dic_str(self)
 
+    @staticmethod
+    def _get_process_history(dic, pre=""):
+        process = dic.process
+        print(pre+"* "+str(process))
+        parent = dic.parent_meta
+        if parent is not None:
+            if isinstance(parent, list):
+                if len(parent) == 2:
+                    # we expect a maximum of 2 parents
+                    print(pre+"|\\")
+                    Metadata._get_process_history(parent[1], "|"+pre)
+                    Metadata._get_process_history(parent[0], pre)
+                else:
+                    raise TypeError(f"Only 2 parents are supported "
+                                    f"(found {len(parent)})")
+            elif isinstance(parent, dict):
+                # we have one parent
+                print(pre+"|")
+                Metadata._get_process_history(parent, pre)
+            else:
+                raise TypeError(f"Unrecognized parent_meta type "
+                                f"{type(parent)}")
+        else:
+            print(pre)
+
+    def print_history(self):
+        Metadata._get_process_history(self)
+
 
 def numerical_value(v, u, integer=False, factor=1):
     try:
