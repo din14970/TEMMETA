@@ -31,7 +31,6 @@ import sys
 import os
 import re
 import logging
-import glob
 from datetime import datetime
 from pathlib import Path
 
@@ -46,7 +45,6 @@ import pandas as pd
 # For working with images
 from PIL import Image
 
-
 # My own modules
 from . import plottingtools as pl
 from . import image_filters as imf
@@ -58,6 +56,7 @@ from . import jsontools as jt
 from . import algebrautils as algutil
 
 import concurrent.futures as cf
+from multiprocessing import Pool, cpu_count
 
 # Initialize the Logger
 logger = logging.getLogger(__name__)
@@ -76,10 +75,10 @@ def read_emd(filepath: str):
     try:
         return EMDFile(filepath, 'r')
     except ValueError:
-        logging.error("Invalid file path, returning None")
+        logger.error("Invalid file path, returning None")
         return None
     except OSError:
-        logging.error("Could not open file, returning None")
+        logger.error("Could not open file, returning None")
         return None
 
 
@@ -103,8 +102,8 @@ def compress_matrix(temp, compress_type="csr"):
     if not temp.ndim == 2:
         raise ValueError("Array must be 2 dimensional.")
     if np.log10(temp.size) > 8:
-        logging.warning("Very large array (>1E8 elements), "
-                        "this can take a while...")
+        logger.warning("Very large array (>1E8 elements), "
+                       "this can take a while...")
     spars = spa.csr_matrix(temp)
     spars = change_compress_type(spars,
                                  compress_type=compress_type)
@@ -132,8 +131,8 @@ def change_compress_type(temp, compress_type):
         raise TypeError("Expected a sparse array.")
     if compress_type == 'none':
         if np.log10(temp.shape[0]*temp.shape[1]) > 8:
-            logging.warning("Very large matrix (>1E8 elements), "
-                            "this can take a while...")
+            logger.warning("Very large matrix (>1E8 elements), "
+                           "this can take a while...")
         return temp.toarray()
     elif compress_type == 'dok':
         return temp.todok()
@@ -601,7 +600,7 @@ class EMDFile(h5py.File):
         try:
             self[path]
         except KeyError:
-            logging.error(f"The path {path} can not be resolved.")
+            logger.error(f"The path {path} can not be resolved.")
             return
         rex = (r"/([a-zA-Z]+)/([0-9a-f]{8}[0-9a-f]{4}[0-9a-f]{4}"
                r"[0-9a-f]{4}[0-9a-f]{12})")
@@ -609,8 +608,8 @@ class EMDFile(h5py.File):
             sig, ds_uuid = re.findall(rex, path)[0]
             return sig, ds_uuid
         except IndexError:
-            logging.error(f"Path {path} does not contain a "
-                          f"signal and/or UUID.")
+            logger.error(f"Path {path} does not contain a "
+                         f"signal and/or UUID.")
             return None, None
 
     def _for_all_datasets_do(self, func):
@@ -1250,7 +1249,7 @@ class EMDFile(h5py.File):
                 scaly = s.BinaryResult.PixelSize.height
                 yinfo = (biny, unity, scaly)
                 acq = self._get_spectrum_stream_acqset(uuid)
-                channels = acq["bincount"]
+                channels = int(acq["bincount"])
                 specunit = "keV"
                 dispersion = float(self._get_detector_property(
                                     s, "Dispersion"))/1000
@@ -1269,7 +1268,7 @@ class EMDFile(h5py.File):
                 yinfo = (biny, unity, scaly)
                 framenum = self._get_dataset_frames(sig, uuid)
                 acq = self._get_spectrum_stream_acqset(uuid)
-                channels = acq["bincount"]
+                channels = int(acq["bincount"])
                 specunit = "keV"
                 dispersion = float(self._get_detector_property(
                                     s, "Dispersion"))/1000
@@ -1321,10 +1320,11 @@ class EMDFile(h5py.File):
         experiment = self._guess_acquisition_type(sig, uuid)
         # specific to the dataset
         data_axes = gen_dax(s, experiment)
+        fname = self.filename.split("/")[-1]
         # general metadata for an acquired dataset
         newdict = {
             "meta": {
-                "filename": self.filename.split("/")[-1],
+                "filename": fname,
             },
             "optics": gen_optics(s),
             "illumination": {
@@ -1364,7 +1364,8 @@ class EMDFile(h5py.File):
                 "name": "Velox",
                 "version": s.Instrument.ControlSoftwareVersion
             },
-            "operator": {}
+            "operator": {},
+            "process": f"Extracted dataset {sig}/{uuid} from EMD file {fname}"
         }
         # specific to the dataset
         newdict["experiment_type"] = experiment
@@ -1388,6 +1389,10 @@ class TEMDataSet(object):
         self.data = data
         self.metadata = metadata
         self.original_metadata = original_metadata
+
+    @property
+    def history(self):
+        self.metadata.print_history()
 
     @property
     def experiment_type(self):
@@ -1571,11 +1576,14 @@ class TEMDataSet(object):
         else:
             logger.error("This combination of axes already exists")
 
-    def to_hspy(self):
+    def get_hs(self):
+        """Import and return hyperspy"""
         if "hyperspy.api" not in sys.modules:
             logger.warning("Importing hyperspy, this can take a while...")
-            global hs
             import hyperspy.api as hs
+        else:
+            hs = sys.modules["hyperspy.api"]
+        return hs
 
 
 def create_profile(arr, pixelsize, pixelunit, parent=None, process=None):
@@ -1672,7 +1680,7 @@ class Profile(TEMDataSet):
 
         Metadata not related to linear axes scales and units is lost.
         """
-        super().to_hspy()
+        hs = super().to_hspy()
         hsim = hs.signals.Signal1D(self.data)
         hsim.axes_manager[0].name = self.x
         hsim.axes_manager[self.x].units = self._get_axis_prop(self.x, "unit")
@@ -1692,7 +1700,7 @@ class Profile(TEMDataSet):
         gg.to_excel(str(Path(filepath)))
 
 
-def _correct_crop_window(x1, y1, x2, y2, imw, imh, nearest_power):
+def _correct_crop_window(x1, y1, x2, y2, imw, imh, nearest_power=False):
     x1 = int(x1)
     x2 = int(x2)
     y1 = int(y1)
@@ -1788,6 +1796,47 @@ class GeneralImage(TEMDataSet):
             self.__y = "y"
         else:
             raise TypeError("The dataset is not a recognized image")
+
+    def change_dtype(self, dtype):
+        self.data = self.data.astype(dtype)
+
+    def _compatible(self, other):
+        """Check whether images are compatible for adding/multiplying"""
+        if (self.width == other.width and
+           self.height == other.height and
+           self.pixelsize == other.pixelsize and
+           self.pixelunit == other.pixelunit):
+            return True
+        else:
+            raise ValueError("The images are not compatible")
+
+    def __add__(self, other):
+        if self._compatible(other):
+            dt = self.data+other.data
+            process = "Added images element-wise"
+            meta = [self.metadata, other.metadata]
+            dummyparent = TEMDataSet(dt, meta)
+            return create_new_image(dt, self.pixelsize, self.pixelunit,
+                                    parent=dummyparent, process=process)
+
+    def __sub__(self, other):
+        if self._compatible(other):
+            dt = self.data-other.data
+            process = ("Subtracted image 1 (right) from image 0 (left) "
+                       "element-wise")
+            meta = [self.metadata, other.metadata]
+            dummyparent = TEMDataSet(dt, meta)
+            return create_new_image(dt, self.pixelsize, self.pixelunit,
+                                    parent=dummyparent, process=process)
+
+    def __mul__(self, other):
+        if self._compatible(other):
+            dt = np.multiply(self.data, other.data)
+            process = "Multiplied images element-wise"
+            meta = [self.metadata, other.metadata]
+            dummyparent = TEMDataSet(dt, meta)
+            return create_new_image(dt, self.pixelsize, self.pixelunit,
+                                    parent=dummyparent, process=process)
 
     @property
     def x(self):
@@ -2067,20 +2116,28 @@ class GeneralImage(TEMDataSet):
             neyy = a*st**2-b*st*ct-c*ct*st+d*ct**2
             exx, exy, eyx, eyy = nexx, nexy, neyx, neyy
         # create images of the 4 important components
-        process = "Calculated a GPA map: Epsilon_xx component."
+        process = (f"Calculated a GPA map. Reflections: ({xx1}, {yy1}), "
+                   f"({xx2}, {yy2}). Radius: {r}. Edge_blur: {edge_blur}."
+                   f" Angle: {angle} {DEGREE}. Epsilon_xx component.")
         im_exx = self._create_child_image(False, exx, self.pixelsize,
                                           self.pixelunit,
                                           parent=self, process=process)
-        process = "Calculated a GPA map: Epsilon_yy component."
+        process = (f"Calculated a GPA map. Reflections: ({xx1}, {yy1}), "
+                   f"({xx2}, {yy2}). Radius: {r}. Edge_blur: {edge_blur}."
+                   f" Angle: {angle} {DEGREE}. Epsilon_yy component.")
         im_eyy = self._create_child_image(False, eyy, self.pixelsize,
                                           self.pixelunit,
                                           parent=self, process=process)
-        process = "Calculated a GPA map: Epsilon_xy component."
+        process = (f"Calculated a GPA map. Reflections: ({xx1}, {yy1}), "
+                   f"({xx2}, {yy2}). Radius: {r}. Edge_blur: {edge_blur}."
+                   f" Angle: {angle} {DEGREE}. Epsilon_xy component.")
         eps_xy = (exy+eyx)/2
         im_exy = self._create_child_image(False, eps_xy, self.pixelsize,
                                           self.pixelunit,
                                           parent=self, process=process)
-        process = "Calculated a GPA map: omega_xy component."
+        process = (f"Calculated a GPA map. Reflections: ({xx1}, {yy1}), "
+                   f"({xx2}, {yy2}). Radius: {r}. Edge_blur: {edge_blur}."
+                   f" Angle: {angle} {DEGREE}. Omega_xy component.")
         omega_xy = (exy-eyx)/2
         im_oxy = self._create_child_image(False, omega_xy, self.pixelsize,
                                           self.pixelunit,
@@ -2146,6 +2203,8 @@ class GeneralImage(TEMDataSet):
         """
         ax, im = pl.plot_image(self, **kwargs)
         if filename:
+            pre, _ = os.path.splitext(filename)
+            self.metadata.to_file(str(Path(pre+"_meta.json")))
             ax.figure.savefig(filename)
         return ax, im
 
@@ -2227,7 +2286,7 @@ class GeneralImage(TEMDataSet):
         If a file path is provided, it is also saved as a .hspy file.
         Metadata not related to axes is not saved.
         """
-        super().to_hspy()
+        hs = super().get_hs()
         hsim = hs.signals.Signal2D(self.data)
         hsim.axes_manager[0].name = self.x
         hsim.axes_manager[self.x].units = self._get_axis_prop(self.x, "unit")
@@ -2271,6 +2330,8 @@ class GeneralImage(TEMDataSet):
         frame = imf.normalize_convert(self.data, dtype=dtype, **kwargs)
         img = Image.fromarray(frame)
         img.save(str(Path(filename)))
+        pre, _ = os.path.splitext(filename)
+        self.metadata.to_file(str(Path(pre+"_meta.json")))
 
 
 class Mask(object):
@@ -2280,6 +2341,7 @@ class Mask(object):
 
     def __init__(self, img, negative=True):
         """Provide an img or FFT object, the mask will adopt size and units"""
+        self.parent = img
         w = img.width
         h = img.height
         self.__negative = negative
@@ -2294,11 +2356,21 @@ class Mask(object):
             self.even = True
         else:
             self.even = False
+        self.metadata = mda.Metadata()
+        self.metadata.process = (f"Initialized {self._bool_string(negative)} "
+                                 f"mask of size {w}x{h}")
+
+    def _record_operation(self, process):
+        newmeta = mda.Metadata()
+        newmeta.parent_meta = self.metadata
+        newmeta.process = str(process)
+        self.metadata = newmeta
 
     def invert(self):
         """Invert the mask"""
         self.data = -1.*self.data+1.
         self.__negative = (not self.negative)
+        self._record_operation("Inverted mask")
 
     @property
     def negative(self):
@@ -2330,12 +2402,17 @@ class Mask(object):
         """Length from center to corner"""
         return np.sqrt((self.mx)**2+(self.my)**2)
 
+    @property
+    def history(self):
+        return self.metadata.print_history()
+
     def set_mask(self, arr):
         """Set the mask to be a certain numpy array. Fails if the wrong size"""
         h = self.height
         w = self.width
         if arr.shape[0] == h and arr.shape[1] == w and arr.ndim == 2:
             self.data = arr
+            self._record_operation("Set an image as the mask")
         else:
             raise ValueError("The mask image is of the wrong size or has "
                              " the wrong number of dimensions")
@@ -2469,7 +2546,7 @@ class Mask(object):
                 negative = True
         return edge_blur, negative
 
-    def _add_mask_feature(self, x, y, feature):
+    def _add_mask_feature(self, x, y, feature, refine=False, window=15):
         """
         Add a certain template feature onto the mask
 
@@ -2481,6 +2558,16 @@ class Mask(object):
             y position in pixels where center of feature should be placed
         feature : numpy array
             the mask feature to be added, e.g. a circle or square
+        refine : boolean
+            place the feature not on the exact pixel but on the maximum within
+            a square the size of window
+        window : int
+            The size of the square around (x,y) to search for the maximum
+
+        Returns
+        -------
+        x, y : int
+            Refined positions
 
         Notes
         -----
@@ -2489,10 +2576,33 @@ class Mask(object):
         h, w = feature.shape
         xs = x-w//2
         ys = y-h//2
+        if refine:
+            window = int(window)
+            wys = max(y-window//2, 0)
+            wye = min(y+window//2+1, self.height)
+            wxs = max(x-window//2, 0)
+            wxe = min(x+window//2+1, self.width)
+            # logger.debug(f"Window between x=[{wxs},{wxe}), y=[{wys},{wye})")
+            search_window = np.abs(self.parent.data[wys:wye,
+                                                    wxs:wxe])
+            dy, dx = np.where(search_window == np.max(search_window))
+            dx = dx[0]
+            dy = dy[0]
+            # logger.debug(f"Maximum in the window at dx={dx}, dy={dy}")
+            if (dx == 0 or dy == 0 or dx == 2*window//2 or dy == 2*window//2):
+                logger.warning("The maximum was found on the edge of the "
+                               "search window, it's possible an incorrect "
+                               "coordinate was reached.")
+            x = wxs+dx
+            y = wys+dy
+            logger.warning(f"Refined coordinates: ({x}, {y})")
+            xs = x-w//2
+            ys = y-h//2
         temp = self.data[ys:ys+h, xs:xs+w]+feature
         temp[temp > 1] = 1
         temp[temp < 0] = 0
         self.data[ys:ys+h, xs:xs+w] = temp
+        return x, y
 
     def _get_opposite_coordinates(self, x, y):
         """
@@ -2505,8 +2615,15 @@ class Mask(object):
         y2 = 2*self.my-y
         return x2, y2
 
+    def _bool_string(self, b, s1="negative", s2="positive"):
+        """Shortcut for returning a string based on a boolean"""
+        if b:
+            return s1
+        else:
+            return s2
+
     def add_circle(self, x, y, r, edge_blur=None, negative=None,
-                   mirrored=True):
+                   mirrored=True, record=True, **kwargs):
         """
         Add a circle feature in the mask
 
@@ -2530,18 +2647,33 @@ class Mask(object):
         mirrored : bool
             If True, the feature is repeated on the opposite side of the
             middle. Default is true.
+        record : bool
+            Whether to record the addition
+
+        Other parameters
+        ----------------
+        refine : boolean
+            place the feature not on the exact pixel but on the maximum within
+            a square the size of window. Default is False.
+        window : int
+            The size of the square to search for the maximum. Default is 15.
         """
         edge_blur, negative = self._get_feature_props(edge_blur=edge_blur,
                                                       negative=negative)
         circ = self._get_circle_template(r, edge_blur, negative)
-        self._add_mask_feature(x, y, circ)
+        x, y = self._add_mask_feature(x, y, circ, **kwargs)
         # add opposite circle also
         if mirrored:
             x2, y2 = self._get_opposite_coordinates(x, y)
-            self._add_mask_feature(x2, y2, circ)
+            self._add_mask_feature(x2, y2, circ, **kwargs)
+        if record:
+            operation = (f"Added {self._bool_string(negative)} circle. "
+                         f"Radius: {r}. Position: ({x}, {y}). "
+                         f"Mirrored: {mirrored}. Edge_blur: {edge_blur}.")
+            self._record_operation(operation)
 
     def add_array1D(self,  x, y, r, edge_blur=None, negative=None, maximum=20,
-                    mirrored=True):
+                    mirrored=True, **kwargs):
         """
         Add a 1D array of circles over the mask
 
@@ -2584,10 +2716,15 @@ class Mask(object):
                 if (xt > 0 and xt < self.width and
                    yt > 0 and yt < self.height):
                     self.add_circle(xt, yt, r, edge_blur=edge_blur,
-                                    negative=negative, mirrored=mirrored)
+                                    negative=negative, mirrored=mirrored,
+                                    record=False, **kwargs)
             except ValueError:
                 # out of bounds, stop
                 break
+        operation = (f"Added {self._bool_string(negative)} 1D array. "
+                     f"Radius: {r}. Start position: ({x}, {y}). "
+                     f"Mirrored: {mirrored}. Edge_blur: {edge_blur}.")
+        self._record_operation(operation)
 
     def _get_2D_array(self, x1, y1, x2, y2, r, edge_blur, incl_zero=False,
                       maximum=30):
@@ -2673,9 +2810,14 @@ class Mask(object):
                 xco = int(i[0])
                 yco = int(i[1])
                 self.add_circle(xco, yco, r, edge_blur=edge_blur,
-                                negative=negative, mirrored=False)
+                                negative=negative, mirrored=False,
+                                record=False)
             except ValueError:
                 pass
+        operation = (f"Added {self._bool_string(negative)} 2D array. "
+                     f"Radius: {r}. Positions: ({x1},{y1}), ({x2},{y2}). "
+                     f"Edge_blur: {edge_blur}.")
+        self._record_operation(operation)
 
     def add_band(self, r1, r2, edge_blur=None, negative=None):
         """
@@ -2699,9 +2841,13 @@ class Mask(object):
                                                       negative=negative)
         circ = self._get_band_template(r1, r2, edge_blur, negative)
         self._add_mask_feature(self.mx, self.my, circ)
+        operation = (f"Added {self._bool_string(negative)} pass-band. "
+                     f"Radii: {r1}, {r2}. "
+                     f"Edge_blur: {edge_blur}.")
+        self._record_operation(operation)
 
     def add_square(self, x, y, r, edge_blur=None, negative=None,
-                   mirrored=True):
+                   mirrored=True, **kwargs):
         """
         Add a square feature in the mask
 
@@ -2729,10 +2875,14 @@ class Mask(object):
         edge_blur, negative = self._get_feature_props(edge_blur=edge_blur,
                                                       negative=negative)
         circ = self._get_square_template(r, edge_blur, negative)
-        self._add_mask_feature(x, y, circ)
+        self._add_mask_feature(x, y, circ, **kwargs)
         if mirrored:
             x2, y2 = self._get_opposite_coordinates(x, y)
-            self._add_mask_feature(x2, y2, circ)
+            self._add_mask_feature(x2, y2, circ, **kwargs)
+        operation = (f"Added {self._bool_string(negative)} square. "
+                     f"Side-length: {r*2}. Position: ({x}, {y}). "
+                     f"Mirrored: {mirrored}. Edge_blur: {edge_blur}.")
+        self._record_operation(operation)
 
     def plot(self, **kwargs):
         """Plot the mask, returns the axis and axisimage object"""
@@ -2879,11 +3029,14 @@ class FFT(TEMDataSet):
         """Initialize and return a mask."""
         return Mask(self, negative)
 
-    def _create_child_fft(self, inplace, data, process=None):
+    def _create_child_fft(self, inplace, data, process=None, parent_2=None):
         """Create a new fft from the parent"""
         newmeta = mda.Metadata()
         newmeta.experiment_type = "FFT"
-        newmeta.parent_meta = self.metadata
+        if parent_2 is None:
+            newmeta.parent_meta = self.metadata
+        else:
+            newmeta.parent_meta = [self.metadata, parent_2.metadata]
         newmeta.process = process
         xinfo = (data.shape[1], self.pixelunit, self.pixelsize)
         yinfo = (data.shape[0], self.pixelunit, self.pixelsize)
@@ -2918,8 +3071,8 @@ class FFT(TEMDataSet):
         If inplace is on, then the data is replaced.
         """
         data = self.data*mask.data
-        process = "Applied mask"
-        return self._create_child_fft(inplace, data, process)
+        process = "Applied mask (multiplied)"
+        return self._create_child_fft(inplace, data, process, parent_2=mask)
 
 
 def create_new_image_stack(arr, pixelsize, pixelunit,
@@ -3164,25 +3317,161 @@ class GeneralImageStack(TEMDataSet):
                                         self.pixelunit,
                                         parent=self, process=process)
 
-    def align_frames(self, inplace=False):
-        """Perform rigid registration on images"""
-        pass
+    def align_frames(self, shifts=None, inplace=False, **kwargs):
+        """
+        Perform rigid registration on images
 
-    def _loop_over_frames(self, do_in_loop, frames=None,
-                          multiprocessing=True):
-        if frames is None:
-            toloop = range(self.frames)
-        elif isinstance(frames, list):
-            toloop = frames
-        else:
-            raise TypeError("Argument frames must be a list")
+        Parameters
+        ----------
+        shifts : tuple of 1D arrays, optional
+            (x_shifts, y_shifts), calculated with calc_misalignment or
+            created by the user.
+        inplace : bool
+            Perform shift in place
 
-        if multiprocessing:
-            with cf.ProcessPoolExecutor() as executor:
-                [executor.submit(do_in_loop, i) for i in toloop]
+        Other parameters
+        ----------------
+        **kwargs
+            If no shifts are provided, they are calculated. The **kwargs
+            are passed to calc_misalignment
+        """
+        if shifts is None:
+            logger.warning("No alignment shifts were provided, "
+                           "will try to calculate the shifts.")
+            sx, sy = self.calc_misalignment(**kwargs)
         else:
-            for i in toloop:
-                do_in_loop(i)
+            sx, sy = shifts
+        # correct the images
+        newdat = []
+        for j, i in enumerate(self.data):
+            newdat.append(ndi.shift(i, (sy[j], sx[j])))
+        newdat = np.array(newdat)
+        process = "Aligned frames"
+        return self._create_child_stack(inplace, newdat, self.pixelsize,
+                                        self.pixelunit,
+                                        parent=self, process=process)
+
+    def calc_misalignment(self, cumulative=False, rectangle=None, border=None,
+                          fraction=None, reg=0.5, debug=False):
+        """
+        Calculate the shifts between images based on autocorrelation
+
+        A small rectangular window in the image is cross-correlated with
+        a slightly larger rectangle in the previous image of the stack.
+        From the maximum, the necessary shift in the second image is calculated
+        to have the maximum match between the rectangles.
+
+        Parameters
+        ----------
+        cumulative : bool, optional
+            If False, all frames will be cross-correlated with the first frame.
+            If True, each frame will be compared to the previous frame, then
+            the absolute shifts of each frame are calculated by cumulating the
+            relative shifts. Can be very instable - errors also accumulate.
+        rectangle : 4-tuple or list, optional
+            Of the form [x1, y1, x2, y2], defining the area that is taken as
+            the feature. Must provide either a rectangle or a fraction.
+        border : int, optional
+            The search area is defined by the rectangle
+            [x1-border, y1-border, x2+border, y2+border]. If none specified
+            it will take 1/3*min(x2-x1, y2-y1)
+        fraction : float, optional
+            If no rectangle is specified, a rectangle will be taken in the
+            middle of the image that is (width*fraction, height*fraction)
+            in size. Must provide either a rectangle or a fraction.
+        reg : float, optional
+            Regularization constant to penalize large displacements. If >0,
+            the cross-correlation is subtracted by reg*D where D the distance
+            from the center.
+        debug : bool, optional
+            If True, an image stack is returned comprised of the
+            cross-correlations.
+
+        Returns
+        -------
+        (rel_shifts_x, rel_shifts_y) : tuple of 1D numpy arrays
+            Shifts in x and shifts in y for each frame
+        cc_stack : GeneralImageStack, optional
+            Stack of cross-correlation frames. Returned only if debug is True.
+        """
+        if (rectangle is None and fraction is None):
+            raise ValueError("You must provide a fraction or rectangle")
+        elif (rectangle is not None and fraction is not None):
+            raise ValueError("You can't provide both a fraction and rectangle")
+        elif (rectangle is not None):
+            x1, y1, x2, y2 = rectangle
+        else:
+            my, mx = (self.height//2, self.width//2)
+            y1 = int((1-fraction)*my)
+            y2 = int((1+fraction)*my)
+            x1 = int((1-fraction)*mx)
+            x2 = int((1+fraction)*mx)
+
+        # coordinates for the feature
+        x1, y1, x2, y2 = _correct_crop_window(x1, y1, x2, y2, self.width,
+                                              self.height)
+        if border is None:
+            border = min((x2-x1), (y2-y1))//3
+        else:
+            border = int(abs(border))
+
+        # coordinates for the search window
+        x1b, y1b, x2b, y2b = _correct_crop_window(x1-border, y1-border,
+                                                  x2+border, y2+border,
+                                                  self.width, self.height)
+        rel_shifts_x = [0]
+        rel_shifts_y = [0]
+        # normalize entire stack
+        ndata = imf.normalize(self.data)
+        if debug:
+            cc_d = []
+        # determine the first frame
+        frm0 = ndata[0, y1b:y2b, x1b:x2b]
+        frm0 = frm0 - frm0.mean()
+        # a distance from the middle regularization term
+        x = np.arange(frm0.shape[1])-frm0.shape[1]//2
+        y = np.arange(frm0.shape[0])-frm0.shape[0]//2
+        X, Y = np.meshgrid(x, y)
+        D = np.sqrt(X**2+Y**2)
+        for i in range(1, self.frames):
+            if cumulative:
+                frm0 = ndata[i-1, y1b:y2b, x1b:x2b]
+                frm0 = frm0 - frm0.mean()
+            frmcompare = ndata[i, y1:y2, x1:x2]
+            frmcompare = frmcompare - frmcompare.mean()
+            cc = ndi.correlate(frm0, frmcompare, mode="constant", cval=0)
+            # regularize the cross-correlation with distance
+            if reg > 0:
+                DT = imf.linscale(D, nmin=0, nmax=cc.max())
+                cc = cc - reg*DT
+            if debug:
+                cc_d.append(cc)
+            ymx, xmx = np.where(cc == np.max(cc))
+            ymx = ymx[0]
+            xmx = xmx[0]
+            # absolute coordinate of half the compare frame - should match
+            hxfc = x1+frmcompare.shape[1]//2
+            hyfc = y1+frmcompare.shape[0]//2
+            dx = x1b+xmx-hxfc
+            dy = y1b+ymx-hyfc
+            rel_shifts_x.append(dx)
+            rel_shifts_y.append(dy)
+        rel_shifts_x = np.array(rel_shifts_x)
+        rel_shifts_y = np.array(rel_shifts_y)
+        # if cumulative, shifts must be cumulated
+        if cumulative:
+            rel_shifts_x = np.cumsum(rel_shifts_x)
+            rel_shifts_y = np.cumsum(rel_shifts_y)
+
+        if not debug:
+            return (rel_shifts_x, rel_shifts_y)
+        else:
+            cc_d = np.array(cc_d)
+            cc_stack = self._create_child_stack(False, cc_d,
+                                                self.pixelsize,
+                                                self.pixelunit,
+                                                parent=self, process=None)
+            return ((rel_shifts_x, rel_shifts_y), cc_stack)
 
     def plot_frame(self, frame_index, **kwargs):
         """
@@ -3217,8 +3506,8 @@ class GeneralImageStack(TEMDataSet):
         return counter
 
     @timeit
-    def export_frames(self, name, path, counter=None, frames=None,
-                      multiprocessing=True, **kwargs):
+    def export_frames(self, path, name="Frame", counter=None, frames=None,
+                      multithreading=False, **kwargs):
         '''
         Exports all the image frames
 
@@ -3227,38 +3516,36 @@ class GeneralImageStack(TEMDataSet):
 
         Parameters
         ----------
-        name : str
-            name prefix for the images to write out
         path : str
             the folder where the images will be written to
+        name : str, optional
+            name prefix for the images to write out, default is "Frame"
         counter : int, optional
             the number of digits in the image counter
         frames : list, optional
             list of frames to export.
-        multiprocessing: bool, optional
-            use multiple cores for operation
+        multithreading: bool, optional
+            Use multiple threads for operation for speed up.
+            Can sometimes give errors and may not be faster in all cases.
 
         Other parameters
         ----------------
         **kwargs: optional kwargs to pass to image_filters.normalize_convert:
-        min, max, type.
+        min, max, dtype.
         '''
         if not os.path.exists(path):
             os.makedirs(path)
+        if frames is None:
+            self.metadata.to_file(str(Path(path+"/metadata.json")))
         # set the number of digits in the counter
         counter = self._set_counter(counter)
-
-        def do_in_loop(i):
-            c = str(i).zfill(counter)
-            fp = str(Path(f"{path}/{name}_{c}.png"))
-            self.save_frame(i, fp, **kwargs)
-
-        self._loop_over_frames(do_in_loop, frames=frames,
-                               multiprocessing=multiprocessing)
+        _loop_over_stack_thread(self, _save_frame_to_file, path, name, counter,
+                                frames=frames, multithreading=multithreading,
+                                **kwargs)
 
     @timeit
-    def plot_export_frames(self, name, path, counter=None, frames=None,
-                           multiprocessing=True, **kwargs):
+    def plot_export_frames(self, path, name="Frame", counter=None, frames=None,
+                           multiprocessing=False, **kwargs):
         '''
         Shortcut to save all images to separate files with scale bars
 
@@ -3266,16 +3553,17 @@ class GeneralImageStack(TEMDataSet):
 
         Parameters
         ----------
-        name : str
-            name prefix for the images to write out
         path : str
             the folder where the images will be written to
+        name : str, optional
+            name prefix for the images to write out. Defaults to "Frame".
         counter : int, optional
             the number of digits in the image counter. Default is minimum.
         frames : list, optional
             list of frames to export. Default is all.
         multiprocessing: bool, optional
-            use multiple cores for operation. Default is true.
+            Use multiple cores for operation for speed up.
+            Can sometimes give errors and may not be faster in all cases.
 
         Other parameters
         ----------------
@@ -3288,17 +3576,15 @@ class GeneralImageStack(TEMDataSet):
         '''
         if not os.path.exists(path):
             os.makedirs(path)
+        # write out the metadata, only if all frames are written out
+        if frames is None:
+            self.metadata.to_file(str(Path(path+"/metadata.json")))
         # set the number of digits in the counter
         counter = self._set_counter(counter)
-
-        def do_in_loop(i):
-            c = str(i).zfill(counter)
-            fp = str(Path(f"{path}/{name}_{c}.tiff"))
-            self.plot_frame(i, filename=fp, show_fig=False,
-                            scale_bar=True, dpi=100, **kwargs)
-
-        self._loop_over_frames(do_in_loop, frames=frames,
-                               multiprocessing=multiprocessing)
+        _loop_over_stack(self, _plot_frame_to_file, self.pixelsize,
+                         self.pixelunit, path, name, counter,
+                         frames=frames, multiprocessing=multiprocessing,
+                         **kwargs)
 
     def to_hspy(self, filepath=None):
         """
@@ -3306,9 +3592,7 @@ class GeneralImageStack(TEMDataSet):
 
         If a file path is provided, it is also saved as a .hspy file
         """
-        if "hyperspy.api" not in sys.modules:
-            logger.warning("Importing hyperspy, this can take a while...")
-            import hyperspy.api as hs
+        hs = super().get_hs()
         hsim = hs.signals.Signal2D(self.data)
         hsim.axes_manager[0].name = "frame"
         hsim.axes_manager[1].name = self.x
@@ -3317,10 +3601,311 @@ class GeneralImageStack(TEMDataSet):
         hsim.axes_manager[2].name = self.y
         hsim.axes_manager[self.y].units = self._get_axis_prop(self.y, "unit")
         hsim.axes_manager[self.y].scale = self._get_axis_prop(self.y, "scale")
-        hsim.original_metadata = self.metadata
         if filepath:
             hsim.save(str(Path(filepath)))
         return hsim
+
+
+def _loop_over_stack(stack, do_in_loop, *args, frames=None,
+                     multiprocessing=True, **kwargs):
+    if frames is None:
+        toloop = range(stack.frames)
+    elif isinstance(frames, list):
+        toloop = frames
+    else:
+        raise TypeError("Argument frames must be a list")
+    if multiprocessing:
+        try:
+            workers = cpu_count()
+        except NotImplementedError:
+            workers = 1
+        with Pool(processes=workers) as pool:
+            pool.map(FrameByFrame(do_in_loop, stack.data, *args, **kwargs),
+                     toloop)
+    else:
+        for i in toloop:
+            do_in_loop(i, stack.data, *args, **kwargs)
+
+
+def _loop_over_stack_thread(stack, do_in_loop, *args, frames=None,
+                            multithreading=True, **kwargs):
+    if frames is None:
+        toloop = range(stack.frames)
+    elif isinstance(frames, list):
+        toloop = frames
+    else:
+        raise TypeError("Argument frames must be a list")
+    if multithreading:
+        with cf.ThreadPoolExecutor() as pool:
+            pool.map(FrameByFrame(do_in_loop, stack.data, *args, **kwargs),
+                     toloop)
+    else:
+        for i in toloop:
+            do_in_loop(i, stack.data, *args, **kwargs)
+
+
+def _save_frame_to_file(i, data, path, name, counter, **kwargs):
+    """Helper function for multiprocessing, saving frame i of stack"""
+    c = str(i).zfill(counter)
+    fp = str(Path(f"{path}/{name}_{c}.png"))
+    frm = data[i]
+    frame = imf.normalize_convert(frm, **kwargs)
+    img = Image.fromarray(frame)
+    img.save(fp)
+
+
+def _plot_frame_to_file(i, data, pixelsize, pixelunit, path, name,
+                        counter, **kwargs):
+    """Helper function for multiprocessing, saving plot of frame i of stack"""
+    c = str(i).zfill(counter)
+    fp = str(Path(f"{path}/{name}_{c}.png"))
+    frm = data[i]
+    ax, im = pl.plot_array(frm, pixelsize=pixelsize, pixelunit=pixelunit,
+                           show_fig=False, **kwargs)
+    ax.figure.savefig(fp)
+
+
+class FrameByFrame(object):
+    """A pickle-able wrapper for doing a function on all frames of a stack"""
+    def __init__(self, do_in_loop, stack, *args, **kwargs):
+        self.func = do_in_loop
+        self.stack = stack
+        self.args = args
+        self.kwargs = kwargs
+
+    def __call__(self, index):
+        self.func(index, self.stack, *self.args, **self.kwargs)
+
+
+def images_to_stack(lst):
+    """
+    Combines a list of individual GeneralImage objects into a stack
+    """
+    data = np.array([i.data for i in lst])
+    template = lst[0]
+    metadata = mda.Metadata()
+    metadata.experiment_type = "modified"
+    metadata.parent_meta = template.metadata
+    metadata.process = (f"Stacked individual images")
+    xinfo = (data.shape[2], template.pixelunit, template.pixelsize)
+    yinfo = (data.shape[1], template.pixelunit, template.pixelsize)
+    finfo = (data.shape[0], None, None)
+    metadata["data_axes"] = mda.gen_image_stack_axes(xinfo, yinfo,
+                                                     finfo)
+    metadata = mda.Metadata(metadata)
+    return GeneralImageStack(data, metadata)
+
+
+def import_file_to_image(path):
+    """
+    Re-import an image from a file and return a GeneralImage object
+
+    Tries to also import a metadata json file. Only if the json file has the
+    same name + _meta as the file will this work! If found it will
+    automatically update, otherwise it starts with blank metadata.
+    """
+    im = Image.open(path)
+    data = np.array(im)
+    # get name of the file
+    fp, _ = os.path.splitext(path)
+    metapath = f"{fp}_meta.json"
+    if os.path.isfile(metapath):
+        meta = jt.read_json(metapath)
+        metadata = mda.Metadata(meta)
+    else:
+        logger.error(f"No metadata json file associated with the image was"
+                     f" found. Creating blank metadata and assuming pixel "
+                     f"units.")
+        metadata = mda.Metadata()
+        metadata.experiment_type = "modified"
+        metadata.process = (f"Imported from file")
+        xinfo = (data.shape[2], "pixels", 1)
+        yinfo = (data.shape[1], "pixels", 1)
+        metadata["data_axes"] = mda.gen_image_axes(xinfo, yinfo)
+        metadata = mda.Metadata(metadata)
+    return GeneralImage(data, metadata)
+
+
+def import_files_to_stack(export_folder):
+    """
+    Re-import a set of images in a folder and return a stack object
+
+    The images must follow the naming convention prefix_number.extension.
+    They must be importable by Image.open. Tries to also import a metadata
+    json file. If found it will automatically update, otherwise it starts
+    with blank metadata.
+    """
+    files = os.listdir(export_folder)
+    pattern = re.compile(r"(.*)\_([0-9]+)\..+")
+    image_names = []
+    meta = ""  # name of the metadata file
+    prefix = ""  # to be able to find the initial iteration
+    for i in files:
+        mt = pattern.match(i)
+        if mt:
+            if not prefix:
+                prefix, _ = mt.groups()
+            else:
+                prefix_compare, _ = mt.groups()
+                if prefix_compare != prefix:
+                    raise ValueError("Not all images in the folder have the"
+                                     " same name, or other files match the "
+                                     "pattern .*\\_[0-9]+\\..+ . "
+                                     "Could not create stack")
+            image_names.append(i)
+        else:
+            # it might be a JSON file
+            pattern_meta = re.compile(r"(.*)\.json")
+            match2 = pattern_meta.match(i)
+            if match2:
+                meta = i
+
+    image_names.sort()
+
+    if image_names:
+        images = []
+        for i in image_names:
+            path = export_folder+"/"+i
+            im = Image.open(path)
+            im = np.array(im)
+            images.append(im)
+        data = np.array(images)
+        if meta:
+            meta = jt.read_json(export_folder+"/"+meta)
+            metadata = mda.Metadata(meta)
+        else:
+            logger.error(f"No metadata json file was found in the folder. "
+                         f"Creating blank metadata and assuming pixel units.")
+            metadata = mda.Metadata()
+            metadata.experiment_type = "modified"
+            metadata.process = (f"Imported from individual images in "
+                                f"{export_folder}")
+            xinfo = (data.shape[2], "pixels", 1)
+            yinfo = (data.shape[1], "pixels", 1)
+            finfo = (data.shape[0], None, None)
+            metadata["data_axes"] = mda.gen_image_stack_axes(xinfo, yinfo,
+                                                             finfo)
+            metadata = mda.Metadata(metadata)
+        return GeneralImageStack(data, metadata)
+    else:
+        logger.error(f"No images detected in {export_folder}")
+        return None
+
+
+class Spectrum(TEMDataSet):
+    """
+    Abstraction of a single 1D spectrum
+    """
+    def __init__(self, *args, **kwargs):
+        super().__init__(*args, **kwargs)
+        self.peaks = None
+
+    @property
+    def x(self):
+        return "channel"
+
+    @property
+    def axis_name(self):
+        return "Energy"
+
+    def set_energy_axis(self, dispersion, unit, offset=0):
+        """Set the energy scale, unit and offset"""
+        self.set_axis_scale("channel", dispersion, unit, offset)
+
+    @property
+    def channels(self):
+        return self._get_axis_prop(self.x, "bins")
+
+    @property
+    def dispersion(self):
+        return self._get_axis_prop(self.x, "scale")
+
+    @property
+    def energy_unit(self):
+        return self._get_axis_prop(self.x, "unit")
+
+    @property
+    def spectrum_offset(self):
+        return self._get_axis_prop(self.x, "offset")
+
+    @property
+    def channel_axis(self):
+        return np.arange(self.channels)
+
+    def _get_energy_of_channel(self, channel):
+        return channel*self.dispersion+self.spectrum_offset
+
+    def _get_channel_of_energy(self, energy):
+        return int((energy-self.spectrum_offset)/self.dispersion)
+
+    @property
+    def energy_axis(self):
+        return self._get_energy_of_channel(self.channel_axis)
+
+    def calc_peaks(self, pf_props={"height": 300, "width": 10}):
+        """
+        Calculate the peaks in the spectrum
+
+        Parameters
+        ----------
+        pf_props : dict
+            Properties passed to the peak finding algorithm
+            See: processing.get_spectrum_peaks. Default is
+            {"height": 300, "width": 10}
+
+        Returns
+        -------
+        df : pandas DataFrame
+            Three column table:
+                - channel indexes corresponding to peaks,
+                - energies corresponding to the channels
+                - Height of the peaks
+        props : additional properties of the peaks
+        """
+        arr = self.data
+        peaks, props = proc.get_spectrum_peaks(arr, **pf_props)
+        peak_heights = arr[peaks]
+        peak_energy = self._get_energy_of_channel(peaks)
+        adt = np.vstack([peaks, peak_energy, peak_heights]).T
+        df = pd.DataFrame(adt, columns=["Channel",
+                                        f"Energy ({self.energy_unit})",
+                                        f"Intensity (a.u.)"])
+        self.peaks = df
+        return df, props
+
+    def plot(self, ax=None, show_peaks=False, **kwargs):
+        return pl.plot_spectrum(self, ax=ax, show_peaks=show_peaks, **kwargs)
+
+    def to_hspy(self, filepath=None):
+        """
+        Convert to a hyperspy dataset and potentially save to file
+
+        Metadata not related to linear axes scales and units is lost.
+        """
+        hs = super().get_hs()
+        hsim = hs.signals.Signal1D(self.data)
+        hsim.axes_manager[0].name = self.axis_name
+        hsim.axes_manager[self.axis_name].units = self._get_axis_prop(self.x,
+                                                                      "unit")
+        hsim.axes_manager[self.axis_name].scale = self._get_axis_prop(self.x,
+                                                                      "scale")
+        if filepath:
+            hsim.save(str(Path(filepath)))
+        return hsim
+
+    def to_excel(self, filepath):
+        """Write out the profile data to an excel file with two columns"""
+        dt = self.data
+        x = self.energy_axis
+        adt = np.vstack([x, dt]).T
+        gg = pd.DataFrame(adt, columns=[f"Energy ({self.energy_unit})",
+                                        f"Intensity (a.u.)"])
+        gg.to_excel(str(Path(filepath)))
+
+
+class LineSpectrum(TEMDataSet):
+    """Abstraction of line spectrum"""
+    pass
 
 
 class SpectrumMap(TEMDataSet):
@@ -3331,11 +3916,38 @@ class SpectrumMap(TEMDataSet):
     '''
     def __init__(self, *args, **kwargs):
         super().__init__(*args, **kwargs)
-        if self.experiment_type == "spectrum_map":
+        if (self.experiment_type == "spectrum_map" or
+           self.experiment_type == "modified"):
             self.__x = "scan_x"
             self.__y = "scan_y"
         else:
             raise TypeError("The dataset is not a spectrum stream")
+
+    def _create_child_map(self, inplace, data, pixelsize=None,
+                          dispersion=None, spectrum_offset=None, process=None):
+        if pixelsize is None:
+            pixelsize = self.pixelsize
+        if dispersion is None:
+            dispersion = self.dispersion
+        if spectrum_offset is None:
+            spectrum_offset = self.spectrum_offset
+        newmap = create_new_spectrum_map(data, pixelsize, self.pixelunit,
+                                         dispersion, self.energy_unit,
+                                         spectrum_offset, parent=self,
+                                         process=process)
+        if not inplace:
+            return newmap
+        else:
+            self.__init__(data, newmap.metadata)
+
+    def set_scale(self, scale, unit):
+        """Set the scan pixel scale and unit"""
+        self.set_axis_scale(self.x, scale, unit)
+        self.set_axis_scale(self.y, scale, unit)
+
+    def set_energy_axis(self, dispersion, unit, offset=0):
+        """Set the energy scale, unit and offset"""
+        self.set_axis_scale("channel", dispersion, unit, offset)
 
     @property
     def x(self):
@@ -3363,11 +3975,15 @@ class SpectrumMap(TEMDataSet):
 
     @property
     def channels(self):
-        self._get_axis_prop("channel", "bins")
+        return self._get_axis_prop("channel", "bins")
 
     @property
     def dispersion(self):
-        self._get_axis_prop("channel", "scale")
+        return self._get_axis_prop("channel", "scale")
+
+    @property
+    def dimensions(self):
+        return (self.channels, self.height, self.width)
 
     @property
     def energy_unit(self):
@@ -3377,19 +3993,161 @@ class SpectrumMap(TEMDataSet):
     def spectrum_offset(self):
         return self._get_axis_prop("channel", "offset")
 
-    def crop_rectangle(self, x1, y1, x2, y2, inplace=False):
+    def _get_energy_of_channel(self, channel):
+        return channel*self.dispersion+self.spectrum_offset
+
+    def _get_channel_of_energy(self, energy):
+        return int((energy-self.spectrum_offset)/self.dispersion)
+
+    def _get_integrated_image(self, energy, width):
+        # starting channel index
+        start = self._get_channel_of_energy(energy-width/2)
+        if start < 0:
+            start = 0
+        # ending channel index
+        end = self._get_channel_of_energy(energy+width/2)
+        if end > self.channels:
+            end = self.channels
+        # add all these columns and make into 1D numpy array
+        return self.data[start:end, :, :].sum(axis=0)
+
+    def integrate_to_image(self, energy, width):
+        '''
+        Get 2D array (x,y) with total counts within a certain energy window
+
+        Parameters
+        ----------
+        energy : float
+            Energy to integrate intensities
+        width : float
+            Width of the energy window to integrate
+
+        Returns
+        -------
+        nimg : GeneralImage
+            New image object
+        '''
+        start = self._get_channel_of_energy(energy-width/2)
+        if start < 0:
+            start = 0
+        # ending channel index
+        end = self._get_channel_of_energy(energy+width/2)
+        if end > self.channels:
+            end = self.channels
+        dt_ar = self.data[start:end, :, :].sum(axis=0)
+        process = (f"Integrated channels {start}-{end} "
+                   f"({energy} p.m. {width} {self.energy_unit})")
+        nimg = create_new_image(dt_ar, self.pixelsize, self.pixelunit, self,
+                                process)
+        return nimg
+
+    def rebin(self, factor, inplace=False):
+        """
+        Rebin scan dimensions by an integer factor
+
+        Contributions from neighboring pixels are added together. Only
+        the simple integer binning is supported, for more advanced binning
+        with interpolation consider using Hyperspy.
+
+        Parameters
+        ----------
+        factor : integer
+            Rebin scaling factor. If 2, then the width and height are divided
+            by 2 and nearest 4 pixels summed.
+        inplace : bool
+            Whether to replace the data inside the object or return a new one.
+
+        Returns
+        -------
+        nmap : SpectrumMap
+            New spectrummap object
+        """
+        assert factor >= 1, "Factor must be greater than 1"
+        assert self.height % factor == 0, ("Factor must divide x "
+                                           "and y-dimension")
+        assert self.height % factor == 0, ("Factor must divide x "
+                                           "and y-dimension")
+        a = self.data
+        # copied from Hyperspy rebin function
+        scale = np.array([1, factor, factor])
+        lenShape = len(a.shape)
+        new_shape = np.asarray(a.shape) // np.asarray(scale)
+        new_shape = tuple(int(ns) for ns in new_shape)
+        rshape = ()
+        for athing in zip(new_shape, scale):
+            rshape += athing
+        data = a.reshape(rshape).sum(axis=tuple(
+            2 * i + 1 for i in range(lenShape)))
+        process = f"Rebinned x and y axis by factor {factor}"
+        return self._create_child_map(inplace, data,
+                                      pixelsize=self.pixelsize*factor,
+                                      process=process)
+
+    def rebin_energy(self, factor, inplace=False):
+        """
+        Rebin energy dimensions by an integer factor
+
+        Contributions from neighboring pixels are added together. Only
+        the simple integer binning is supported, for more advanced binning
+        with interpolation consider using Hyperspy.
+
+        Parameters
+        ----------
+        factor : integer
+            Rebin scaling factor. If 2, then the number of channels is divided
+            by 2 and nearest 2 channels summed.
+        inplace : bool
+            Whether to replace the data inside the object or return a new one.
+
+        Returns
+        -------
+        nmap : SpectrumMap
+            New spectrummap object
+        """
+        assert factor >= 1, "Factor must be greater than 1"
+        assert self.channels % factor == 0, ("Factor must divide "
+                                             "channel-dimension")
+        a = self.data
+        # copied from Hyperspy rebin function
+        scale = np.array([factor, 1, 1])
+        lenShape = len(a.shape)
+        new_shape = np.asarray(a.shape) // np.asarray(scale)
+        new_shape = tuple(int(ns) for ns in new_shape)
+        rshape = ()
+        for athing in zip(new_shape, scale):
+            rshape += athing
+        data = a.reshape(rshape).sum(axis=tuple(
+            2 * i + 1 for i in range(lenShape)))
+        process = f"Rebinned channel axis by factor {factor}"
+        return self._create_child_map(inplace, data,
+                                      dispersion=self.dispersion*factor,
+                                      process=process)
+
+    def plot_interactive(self):
+        """Plot so you can browse through the images"""
+        pl.plot_spectrum_map(self)
+
+    def crop(self, x1, y1, x2, y2, nearest_power=False, inplace=False):
         """
         Crop the spectrum map and return a new spectrum map
         """
-        pass
+        x1, y1, x2, y2 = _correct_crop_window(x1, y1, x2, y2,
+                                              self.width, self.height,
+                                              nearest_power)
+        data = self.data[:, y1:y2, x1:x2].copy()
+        process = f"Cropped between x={x1}-{x2} and y={y1}-{y2}"
+        return self._create_child_map(inplace, data, process=process)
 
+    @property
     def spectrum(self):
-        """
-        Get the total spectrum of the spectrum map
-        """
-        pass
+        '''Return the total spectrum in the map'''
+        data = self.data.sum(axis=1).sum(axis=1)
+        process = "Total spectrum"
+        return create_new_spectrum(data, self.dispersion, self.energy_unit,
+                                   self.spectrum_offset, parent=self,
+                                   process=process)
 
-    def line_spectrum(self, x1, y1, x2, y2, width):
+    def line_spectrum(self, x1, y1, x2, y2, width=1):
         """
         Get a line spectrum object
         """
@@ -3399,7 +4157,166 @@ class SpectrumMap(TEMDataSet):
         """
         Turn into spectrum map object
         """
-        pass
+        hs = super().get_hs()
+        hsim = hs.signals.Signal2D(self.data)
+        hsim.axes_manager[0].name = "Energy"
+        hsim.axes_manager["Energy"].units = self.energy_unit
+        hsim.axes_manager["Energy"].scale = self.dispersion
+        hsim.axes_manager["Energy"].offset = self.spectrum_offset
+        hsim.axes_manager[1].name = self.y
+        hsim.axes_manager[self.y].units = self._get_axis_prop(self.y, "unit")
+        hsim.axes_manager[self.y].scale = self._get_axis_prop(self.y, "scale")
+        hsim.axes_manager[2].name = self.x
+        hsim.axes_manager[self.x].units = self._get_axis_prop(self.x, "unit")
+        hsim.axes_manager[self.x].scale = self._get_axis_prop(self.x, "scale")
+        if filename:
+            hsim.save(str(Path(filename)))
+        return hsim
+
+
+def create_new_spectrum(arr, dispersion, energy_unit, spectrum_offset,
+                        parent=None, process=None):
+    arr = np.array(arr)
+    assert arr.ndim == 1, "The array must have 1 dimension"
+    newmeta = mda.Metadata()
+    newmeta.experiment_type = "modified"
+    if parent:
+        newmeta.parent_meta = parent.metadata
+    if process:
+        newmeta.process = process
+    cinfo = (arr.shape[0], energy_unit, dispersion, spectrum_offset)
+    newmeta["data_axes"] = mda.gen_spectrum_axes(cinfo)
+    newmeta = mda.Metadata(newmeta)
+    return Spectrum(arr, newmeta)
+
+
+def create_new_line_spectrum(arr, pixelsize, pixelunit, dispersion,
+                             energy_unit, spectrum_offset,
+                             parent=None, process=None):
+    arr = np.array(arr)
+    assert arr.ndim == 2, "The array must have 2 dimensions"
+    newmeta = mda.Metadata()
+    newmeta.experiment_type = "modified"
+    if parent:
+        newmeta.parent_meta = parent.metadata
+    if process:
+        newmeta.process = process
+    linfo = (arr.shape[1], pixelunit, pixelsize)
+    cinfo = (arr.shape[0], energy_unit, dispersion, spectrum_offset)
+    newmeta["data_axes"] = mda.gen_spectrum_line_axes(linfo, cinfo)
+    newmeta = mda.Metadata(newmeta)
+    return LineSpectrum(arr, newmeta)
+
+
+def create_new_spectrum_map(arr, pixelsize, pixelunit, dispersion, energy_unit,
+                            spectrum_offset, parent=None, process=None):
+    """
+    Create a SpectrumMap object from an array, pixelsize, pixelunit, dispersion
+    energy_unit and spectrum offset
+
+    The "experiment_type" will be set to "modified". Any time axis is lost.
+
+    Parameters
+    ----------
+    arr : array-like, 3D (channels, height, width)
+        The array representing the spectrum map.
+    pixelsize : float
+        The size of a pixel in the correct units
+    pixelunit : str
+        The size unit of the pixel
+    dispersion : float
+        Energy per channel
+    energy_unit : string
+        Energy unit
+    spectrum_offset : float
+        Energy of channel 0
+    parent : TEMDataSet, optional
+        If the dataset is derived from another dataset (e.g. a filter)
+        then the parent is provided as an argument. The parent metadata will
+        be stored in the child metadata under "parent_metadata"
+    process : object, optional
+        Some description of how the dataset was obtained. Could be a
+        dictionary, string, ... and it will be stored under the key "process"
+
+    Returns
+    -------
+    map : SpectrumMap
+        The SpectrumMap object with some easy processing tools
+    """
+    arr = np.array(arr)
+    assert arr.ndim == 3, "The array must have three dimensions to be a map"
+    newmeta = mda.Metadata()
+    newmeta.experiment_type = "modified"
+    if parent:
+        newmeta.parent_meta = parent.metadata
+    if process:
+        newmeta.process = process
+    xinfo = (arr.shape[2], pixelunit, pixelsize)
+    yinfo = (arr.shape[1], pixelunit, pixelsize)
+    cinfo = (arr.shape[0], energy_unit, dispersion, spectrum_offset)
+    newmeta["data_axes"] = mda.gen_spectrum_map_axes(xinfo, yinfo, cinfo)
+    newmeta = mda.Metadata(newmeta)
+    return SpectrumMap(arr, newmeta)
+
+
+def create_new_spectrum_stream(arr, xbins, ybins, pixelsize, pixelunit,
+                               channels, dispersion, energy_unit,
+                               spectrum_offset, frames, parent=None,
+                               process=None):
+    """
+    Create a SpectrumStream object from an array, pixelsize, pixelunit,
+    dispersion, energy_unit, spectrum offset, and number of frames
+
+    The "experiment_type" will be set to "modified". Any time axis is lost.
+
+    Parameters
+    ----------
+    arr : scipy sparse matrix
+        Stream data in 1 sparse matrix
+    xbins : int
+        Number of bins in the x-direction
+    ybins : int
+        Number of bins in the y-direction
+    pixelsize : float
+        The size of a pixel in the correct units
+    pixelunit : str
+        The size unit of the pixel
+    channels : int
+        Number of energy channels
+    dispersion : float
+        Energy per channel
+    energy_unit : string
+        Energy unit
+    spectrum_offset : float
+        Energy of channel 0
+    frames : int
+        Number of frames
+    parent : TEMDataSet, optional
+        If the dataset is derived from another dataset (e.g. a filter)
+        then the parent is provided as an argument. The parent metadata will
+        be stored in the child metadata under "parent_metadata"
+    process : object, optional
+        Some description of how the dataset was obtained. Could be a
+        dictionary, string, ... and it will be stored under the key "process"
+
+    Returns
+    -------
+    map : SpectrumStream
+        The SpectrumStream object with some easy processing tools
+    """
+    newmeta = mda.Metadata()
+    newmeta.experiment_type = "modified"
+    if parent:
+        newmeta.parent_meta = parent.metadata
+    if process:
+        newmeta.process = process
+    xinfo = (xbins, pixelunit, pixelsize)
+    yinfo = (ybins, pixelunit, pixelsize)
+    cinfo = (channels, energy_unit, dispersion, spectrum_offset)
+    newmeta["data_axes"] = mda.gen_spectrum_stream_axes(xinfo, yinfo,
+                                                        int(frames), cinfo)
+    newmeta = mda.Metadata(newmeta)
+    return SpectrumStream(arr, newmeta)
 
 
 class SpectrumStream(TEMDataSet):
@@ -3408,11 +4325,59 @@ class SpectrumStream(TEMDataSet):
     '''
     def __init__(self, *args, **kwargs):
         super().__init__(*args, **kwargs)
-        if self.experiment_type == "spectrum_stream":
+        if (self.experiment_type == "spectrum_stream" or
+           self.experiment_type == "modified"):
             self.__x = "scan_x"
             self.__y = "scan_y"
         else:
             raise TypeError("The dataset is not a spectrum stream")
+
+    def set_scale(self, scale, unit):
+        """Set the scan pixel scale and unit"""
+        self.set_axis_scale(self.x, scale, unit)
+        self.set_axis_scale(self.y, scale, unit)
+
+    def set_energy_axis(self, dispersion, unit, offset=0):
+        """Set the energy scale, unit and offset"""
+        self.set_axis_scale("channel", dispersion, unit, offset)
+
+    def _create_child_stream(self, data, frames, process=None):
+        """Create new spectrumstream from child data, frame number differs"""
+        return create_new_spectrum_stream(data, self.width, self.height,
+                                          self.pixelsize, self.pixelunit,
+                                          self.channels, self.dispersion,
+                                          self.energy_unit,
+                                          self.spectrum_offset, frames,
+                                          parent=self,
+                                          process=process)
+
+    def _create_child_map(self, data, process=None):
+        """Data is in sparse format, turned into full frame"""
+        arr = self._reshape_sparse_matrix(data, self.dimensions)
+        return create_new_spectrum_map(arr, self.pixelsize, self.pixelunit,
+                                       self.dispersion, self.energy_unit,
+                                       self.spectrum_offset, parent=self,
+                                       process=process)
+
+    def get_frame(self, index):
+        frmlst = self._get_frame_list()
+        dt = frmlst[index]
+        process = f"Selected spectrum stream frame {index}"
+        return self._create_child_map(dt, process)
+
+    def select_frames(self, indexes):
+        frmlst = self._get_frame_list()
+        process = f"Selected frames {indexes}"
+        selected = [frmlst[i] for i in indexes]
+        data = self._stack_frames(selected)
+        return self._create_child_stream(data, len(selected), process=process)
+
+    def exclude_frames(self, indexes):
+        frmlst = self._get_frame_list()
+        process = f"Excluded frames {indexes}"
+        selected = [frmlst[i] for i in range(len(frmlst)) if i not in indexes]
+        data = self._stack_frames(selected)
+        return self._create_child_stream(data, len(selected), process=process)
 
     @property
     def x(self):
@@ -3448,11 +4413,11 @@ class SpectrumStream(TEMDataSet):
 
     @property
     def channels(self):
-        self._get_axis_prop("channel", "bins")
+        return self._get_axis_prop("channel", "bins")
 
     @property
     def dispersion(self):
-        self._get_axis_prop("channel", "scale")
+        return self._get_axis_prop("channel", "scale")
 
     @property
     def energy_unit(self):
@@ -3480,13 +4445,26 @@ class SpectrumStream(TEMDataSet):
         result : SpectrumStream
             derivative spectrumstream with aligned frames
         """
-        pass
+        sx, sy = shifts
+        # correct the images
+        newdat = []
+        frmlst = self._get_frame_list()
+        for j, i in enumerate(frmlst):
+            frm = SpectrumStream._reshape_sparse_matrix(i, self.dimensions)
+            frm = ndi.shift(frm, (0, sy[j], sx[j]))
+            frm = SpectrumStream._to_sparse(frm)
+            newdat.append(frm)
+        newdat = SpectrumStream._stack_frames(newdat)
+        process = "Aligned frames"
+        return self._create_child_stack(inplace, newdat, self.pixelsize,
+                                        self.pixelunit,
+                                        parent=self, process=process)
 
     @property
     def scan_dimensions(self):
         return (self.width, self.height)
 
-    def get_frame_list(self, compress_type="csr"):
+    def _get_frame_list(self, compress_type="csr"):
         '''
         Returns data as a list of frames, each frames a sparse matrix.
         '''
@@ -3498,7 +4476,7 @@ class SpectrumStream(TEMDataSet):
         return toreturn
 
     @staticmethod
-    def get_stack_frames(lst, compress_type="csr"):
+    def _stack_frames(lst, compress_type="csr"):
         '''
         Converts a list of sparse matrixes into one by stacking vertically
         '''
@@ -3506,63 +4484,61 @@ class SpectrumStream(TEMDataSet):
         toreturn = spa.vstack(tostack)
         return change_compress_type(toreturn, compress_type=compress_type)
 
-    def get_spectrum_map(self):
+    @property
+    def dimensions(self):
+        return (self.channels, self.height, self.width)
+
+    @property
+    def spectrum_map(self):
         '''
         Add all frames and return 3D matrix representing spectrum map
         '''
-        frmdat = self.get_frame_sum(comp_type="csr")
-        dim = (self.channels, self.height, self.width)
-        return self.reshape_sparse_matrix(frmdat, dim)
+        frmdat = self._get_frame_sum(comp_type="csr")
+        process = f"Sum of all frames"
+        return self._create_child_map(frmdat, process)
 
     @staticmethod
-    def reshape_sparse_matrix(frmdat, dim):
+    def _reshape_sparse_matrix(frmdat, dim):
         '''
         Return 3D full matrix representation from 2D representation
 
         If the 2D matrix has the shape (width*height,channels) then the
         returned matrix has shape (channel, y, x)
         '''
-        cs, xs, ys = dim
+        cs, ys, xs = dim
         return frmdat.T.toarray().reshape(cs, ys, xs)
 
-    def save_matrix(self, filename):
-        '''Save the full dataset to an .npz file'''
-        filename = str(Path(filename + ".npz"))
-        spa.save_npz(filename, self.data)
+    @staticmethod
+    def _to_sparse(frmdat):
+        '''
+        Return 2D sparse CSR representation from full 3D representation
 
-    def get_frame_sum(self, comp_type="csr"):
+        If the 3D matrix has the shape (channel, y, x) then the
+        returned matrix has shape (width*height,channels)
+        '''
+        cs, ys, xs = frmdat.shape
+        return spa.csr_matrix(frmdat.reshape(cs, ys*xs).T)
+
+    def export_data(self, filename):
+        '''Save the full dataset to an .npz file'''
+        pre, _ = os.path.splitext(filename)
+        path = os.path.dirname(filename)
+        if not os.path.exists(path):
+            os.makedirs(path)
+        filename = str(Path(pre + ".npz"))
+        spa.save_npz(filename, self.data)
+        self.metadata.to_file(str(Path(f"{pre}_meta.json")))
+
+    def _get_frame_sum(self, comp_type="csr"):
         '''Return a sparse matrix sum of all frames'''
-        data = self.get_frame_list()
+        data = self._get_frame_list()
         temp = 0
         for i in data:
             temp += i
         return change_compress_type(temp, comp_type)
 
-    def get_image_peak_sum(self, energy, width):
-        '''
-        Get 2D array (x,y) with total counts within a certain energy window
-
-        Parameters
-        ----------
-        energy : float
-            Energy to integrate intensities at in keV
-        width : float
-            width of the energy window to integrate
-        '''
-        # starting channel index
-        start = int((energy-width/2)*1000/self.dispersion)
-        # ending channel index
-        end = int((energy+width/2)*1000/self.dispersion)
-        # we intend to filter based on channels: columns
-        dt_csc = self.data.tocsc()
-        # add all these columns and make into 1D numpy array
-        dt_ar = dt_csc[:, start:end].sum(axis=1).getA1()
-        # reshape
-        dt_frms = np.reshape(dt_ar, (self.num_frames, self.ys, self.xs))
-        return dt_frms.sum(axis=0)
-
     @staticmethod
-    def get_spectrum_sum(data):
+    def _get_spectrum_sum(data):
         '''
         Return a sum spectrum of a sparse matrix
 
@@ -3572,38 +4548,17 @@ class SpectrumStream(TEMDataSet):
         data_sm = data.tocsr()
         return data_sm.sum(axis=0).getA1()
 
-    def get_total_spectrum(self):
+    @property
+    def spectrum(self):
         '''Return the total spectrum in the map'''
-        return self.get_spectrum_sum(self.data)
+        data = self._get_spectrum_sum(self.data)
+        process = "Total spectrum"
+        return create_new_spectrum(data, self.dispersion, self.energy_unit,
+                                   self.spectrum_offset, parent=self,
+                                   process=process)
 
-    def plot_spectrum(self, plot_channels=False, show_peaks=False):
-        '''
-        Plot a quick total spectrum representation of the data
-
-        Parameters
-        ----------
-        plot_channels : bool
-            The x-axis scale is the channel number if True. Use the energy
-            scale if False (default)
-        show_peaks : bool
-            Whether to also plot the peaks
-        '''
-        toplot = self.get_total_spectrum()
-        if not show_peaks:
-            fig, ax = pl.plot_quick_spectrum(toplot,
-                                             plot_channels=plot_channels,
-                                             disp=self.dispersion,
-                                             offset=self.spectrum_offset)
-        else:
-            peaks, peak_heights, _ = self.get_peaks()
-            fig, ax = pl.plot_spectrum_peaks(toplot, peaks, peak_heights,
-                                             log=False,
-                                             disp=self.dispersion,
-                                             offset=self.spectrum_offset)
-        return fig, ax
-
-    def write_streamframes(self, path="./SpectrumStream/", pre="Frame",
-                           counter=None):
+    def export_streamframes(self, path, pre="Frame",
+                            counter=None):
         '''
         Writes out the spectrumstream frame by frame in the .npz format
 
@@ -3614,14 +4569,16 @@ class SpectrumStream(TEMDataSet):
         ----------
         path : str
             path to folder where the files will be written
-        pre : str
-            name prefix
-        counter : int
+        pre : str, optional
+            name prefix. Default is "Frame"
+        counter : int, optional
             number of counter digits. Defaults to the minimum necessary.
         '''
-        dt = self.get_frame_list()
+        dt = self._get_frame_list()
         if not os.path.exists(path):
             os.makedirs(path)
+
+        self.metadata.to_file(str(Path(f"{path}/{pre}_meta.json")))
 
         # set the number of digits in the counter
         mincounter = _get_counter(self.frames)
@@ -3638,84 +4595,113 @@ class SpectrumStream(TEMDataSet):
             name = "{}_{}".format(pre, c)
             spa.save_npz(str(Path(f"{path}/{name}")), i)
 
-    def get_peaks(self, pf_props={"height": 300, "width": 10}):
-        """
-        Calculate the peaks in the total spectrum
 
-        Parameters
-        ----------
-        pf_props : dict
-            Properties passed to the peak finding algorithm
-            See: processing.get_spectrum_peaks. Default is
-            {"height": 300, "width": 10}
+def import_file_to_spectrumstream(path):
+    """
+    Read in spectrumstream frames from .npz file
 
-        Returns
-        -------
-        peaks : array, 1D
-            channel indexes corresponding to peaks
-        peak_heights : array, 1D
-            height of the peak
-        props : additional properties of the peaks
-        """
-        arr = self.get_total_spectrum()
-        peaks, props = proc.get_spectrum_peaks(arr, **pf_props)
-        peak_heights = arr[peaks]
-        return peaks, peak_heights, props
+    Sparse matrix representations of the stream is imported
+    from an .npz file.
 
-    @staticmethod
-    def import_npz_frames(path=".", pre="Frame", counter=None):
-        """
-        Read in frames from .npz files
+    Parameters
+    ----------
+    path : str
+        The path to the npz file.
 
-        Sparse matrix representations of stream frames are imported
-        from .npz files and concatenated to one large data matrix.
-        The expected file format is pre_[0-9]{counter}.npz.
+    Returns
+    -------
+    matrix : SpectrumStream
+        The reconstructed spectrumstream object
+    """
+    data = spa.load_npz(path)
+    # get name of the file
+    fp, _ = os.path.splitext(path)
+    metapath = f"{fp}_meta.json"
+    if os.path.isfile(metapath):
+        meta = jt.read_json(metapath)
+        metadata = mda.Metadata(meta)
+        return SpectrumStream(data, metadata)
+    else:
+        logger.error(f"No metadata json file associated with the stream was"
+                     f" found. Unfortunately the stream can't be recreated.")
+        return
 
-        Parameters
-        ----------
-        path : str, optional
-            The path to the folder containing the streamframe
-            files. Defaults to ".".
-        pre : str, optional
-            The name prefix given to the file. Defaults to 'Frame'
-        counter : int, optional
-            The number of digits appended to each frame
 
-        Returns
-        -------
-        matrix : scipy.csr_matrix
-            The concatenated csr sparse matrix
-        """
-        if not isinstance(path, str):
-            raise TypeError("Expected a string for path")
-        if not isinstance(pre, str):
-            raise TypeError("Expected a string for pre")
-        npzfiles = glob.glob(f"{path}/{pre}_*.npz")
-        if not npzfiles:
-            logger.error("No streamframes found in this folder")
-            return None
-        guessed_frames = len(npzfiles)
-        if counter is None:
-            counter = _get_counter(guessed_frames)
-        elif not isinstance(counter, int):
-            raise TypeError("Expected an integer for counter")
-        else:
-            pass
-        streamdata = []
-        for j, i in enumerate(os.listdir(path)):
-            c = str(j).zfill(counter)
-            name = "/{}_{}.npz".format(pre, c)
-            fp = str(Path(path+name))
-            if os.path.isfile(fp):
-                try:
-                    dt_sparse = spa.load_npz(fp)
-                except ValueError:
-                    logger.error(f"Frame {fp} could not be read."
-                                 f" Aborting.")
-                    return None
-                streamdata.append(dt_sparse)
+def import_files_to_spectrumstream(path):
+    """
+    Read in spectrumstream frames from .npz files
+
+    Sparse matrix representations of stream frames are imported
+    from .npz files and concatenated to one large data matrix.
+    The expected file format is .*\\_[0-9]+\\.npz. If metadata
+    is available in the folder it will also be imported.
+
+    Parameters
+    ----------
+    path : str
+        The path to the folder containing the streamframe files.
+
+    Returns
+    -------
+    matrix : SpectrumStream
+        The concatenated csr sparse matrix
+    """
+    files = os.listdir(path)
+    pattern = re.compile(r"(.*)\_([0-9]+)\.npz")
+    frame_names = []
+    meta = ""  # name of the metadata file
+    prefix = ""  # to be able to find the initial iteration
+    for i in files:
+        mt = pattern.match(i)
+        if mt:
+            if not prefix:
+                prefix, _ = mt.groups()
             else:
-                logger.error("One of the expected stream frames"
-                             " could not be read, aborting.")
-                return None
-        return SpectrumStream.get_stack_frames(streamdata)
+                prefix_compare, _ = mt.groups()
+                if prefix_compare != prefix:
+                    raise ValueError("Not all frames in the folder have the"
+                                     " same prefix, or other files match the "
+                                     "pattern .*\\_[0-9]+\\.npz . "
+                                     "Could not create Spectrumstream")
+            frame_names.append(i)
+        else:
+            # it might be a JSON file
+            pattern_meta = re.compile(r"(.*)\.json")
+            match2 = pattern_meta.match(i)
+            if match2:
+                meta = i
+
+    frame_names.sort()
+
+    if frame_names:
+        frames = []
+        for i in frame_names:
+            path_c = path+"/"+i
+            im = spa.load_npz(path_c)
+            frames.append(im)
+        data = SpectrumStream._stack_frames(frames)
+        if meta:
+            meta = jt.read_json(path+"/"+meta)
+            metadata = mda.Metadata(meta)
+        else:
+            logger.error(f"No metadata json file was found in the folder. "
+                         f"Creating blank metadata and guessing axes "
+                         f"dimensions...")
+            metadata = mda.Metadata()
+            metadata.experiment_type = "modified"
+            metadata.process = (f"Imported from individual images in "
+                                f"{path}")
+            xbins = int(np.sqrt(frames[0].shape[0]))
+            assert xbins**2 == frames[0].shape[0], "Shape of "
+            channels = frames[0].shape[1]
+            xinfo = (xbins, "pixels", 1)
+            yinfo = (xbins, "pixels", 1)
+            cinfo = (channels, "channels", 1, 0)
+            metadata["data_axes"] = mda.gen_spectrum_stream_axes(xinfo, yinfo,
+                                                                 len(frames),
+                                                                 cinfo)
+            metadata = mda.Metadata(metadata)
+        return SpectrumStream(data, metadata)
+    else:
+        logger.error(f"No npz frames in {path}")
+        return None
