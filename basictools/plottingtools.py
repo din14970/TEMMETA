@@ -48,6 +48,51 @@ def plot_profile(profile, ax=None):
     return ax, prof
 
 
+def plot_spectrum(spectrum, ax=None, show_peaks=False, w=5, **kwargs):
+    """
+    Plot an edx spectrum
+
+    Parameters
+    ----------
+    spectrum : data_io.Spectrum
+        Spectrum object
+    axis : matplotlib Axis object, optional
+        If you want to plot on an existing axis instead of
+        creating a new figure.
+    show_peaks : bool, optional
+        Whether to also plot the calculated peaks if present
+    w : float, optional
+        Width of the bands for the peaks in number of channels
+
+    Other parameters
+    ----------------
+    Kwargs : passed to line plot command
+
+    Returns
+    -------
+    ax : matplotlib Axis object
+    prof : the line plot itself
+    """
+    if ax is None:
+        _, ax = plt.subplots()
+    y = spectrum.data
+    x = spectrum.energy_axis
+    ww = w*spectrum.dispersion
+    ax.set_xlabel(f"Energy ({spectrum.energy_unit})")
+    prof = ax.plot(x, y, **kwargs)
+    ax.set_ylabel("Intensity (a.u.)")
+    ax.set_xlim(x.min(), x.max())
+    if show_peaks:
+        if spectrum.peaks is not None:
+            peaks = spectrum.peaks.iloc[:, 1]
+            peak_heights = spectrum.peaks.iloc[:, 2]
+            ax.scatter(peaks, peak_heights,
+                       label="Peaks ({})".format(len(peaks)), color="C1")
+            for i in peaks:
+                ax.axvspan(i-ww/2, i+ww/2, alpha=0.2, color='red')
+    return ax, prof
+
+
 def plot_histogram(x, y, w, **kwargs):
     """
     Plots a histogram. Only equal sized bins are accepted.
@@ -506,5 +551,103 @@ def plot_stack(stack):
     # saveb = wdgts.Button(savea, "save frame", hovercolor="yellow")
     # saveb.on_clicked(dosaveframe)
     # savea._button = saveb
+
+    plt.show()
+
+
+def plot_spectrum_map(specmap):
+    """
+    Plot an interactive spectrum map
+    """
+    fig, ax = plt.subplots(figsize=(8, 6))
+    plt.subplots_adjust(bottom=0.25, left=-0.1)
+    ax.set_aspect("equal")
+
+    e0 = 0
+    w0 = 30*specmap.dispersion
+
+    spec = specmap.spectrum
+
+    # maximum for sliders
+    emin = specmap._get_energy_of_channel(0)
+    emax = specmap._get_energy_of_channel(specmap.channels)
+    # maximum and minimum for specmap color map
+    intmax = np.max(specmap.data.sum(axis=0))
+    intmin = 0
+
+    img = specmap._get_integrated_image(e0, w0)
+    # img = imf.linscale(img, intmin, intmax)
+    lim = plt.imshow(img, cmap="hot")
+    lim.set_clim(intmin, intmax)
+    sb_settings = {"location": 'lower right',
+                   "color": 'k',
+                   "length_fraction": 0.25,
+                   "font_properties": {"size": 12}}
+    scalebar = get_scalebar(specmap.pixelsize, specmap.pixelunit, sb_settings)
+    plt.gca().add_artist(scalebar)
+    scalebar.set_visible(False)
+
+    ax.margins(x=0)
+
+    axcolor = 'white'
+    # [x, y, width, height]
+    axwidth = 0.7
+    axheight = 0.03
+    axmax = plt.axes([0.5-axwidth/2, 0.15, axwidth, axheight],
+                     facecolor=axcolor)
+    axenergy = plt.axes([0.5-axwidth/2, 0.10, axwidth, axheight],
+                        facecolor=axcolor)
+    axwidth = plt.axes([0.5-axwidth/2, 0.05, axwidth, axheight],
+                       facecolor=axcolor)
+
+    smx = wdgts.Slider(axmax, 'Max', intmin, intmax, valinit=intmax//3,
+                       valstep=1, valfmt="%d")
+    sen = wdgts.Slider(axenergy, f'Energy ({specmap.energy_unit})', emin, emax,
+                       valinit=e0)
+    swi = wdgts.Slider(axwidth, f'Width ({specmap.energy_unit})', 0,
+                       (emax-emin)/2, valinit=w0)
+
+    # plot the spectrum on the energy axis
+    _, lne = spec.plot(ax=axenergy)
+    axenergy.set_ylim(0, spec.data.max()/3)
+    axenergy.set_xlabel("")
+    axenergy.set_ylabel("")
+    lne[0].set_color("red")
+
+    def update_im(val):
+        en = sen.val
+        wi = swi.val
+        mx = smx.val
+        mn = 0
+        arr = specmap._get_integrated_image(en, wi)
+        # arr = imf.linscale(arr, mn, mx)
+        lim.set_data(arr)
+        lim.set_clim(mn, mx)
+        fig.canvas.draw_idle()
+
+    def update_clim(val):
+        mx = smx.val
+        mn = 0
+        lim.set_clim(mn, mx)
+
+    smx.on_changed(update_clim)
+    axmax._slider = smx
+    sen.on_changed(update_im)
+    axenergy._slider = sen
+    swi.on_changed(update_im)
+    axwidth._slider = swi
+
+    # checkbox for scalebar
+    sba = plt.axes([0.65, 0.2, 0.25, 0.25], facecolor=axcolor)
+    sba.axis("off")
+    sbb = wdgts.CheckButtons(sba, ('scalebar',))
+
+    def seescalebar(label):
+        yesorno = sbb.get_status()[0]
+        scalebar.set_visible(yesorno)
+        fig.canvas.draw_idle()
+
+    sbb.on_clicked(seescalebar)
+    sba._checkbox = sbb
 
     plt.show()
