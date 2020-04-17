@@ -273,6 +273,21 @@ def plot_image(img, **kwargs):
     return ax, im
 
 
+def plotImagePeaks(image, peaks, ax=None):
+    # Display the image (using matplotlib)
+    # Create new figure window
+    image = np.array(image)
+    image = imf.normalize(image)
+    if ax is None:
+        _, ax = plt.subplots()
+    fig = ax.figure
+    im = ax.imshow(image, cmap='plasma')
+    pks = ax.scatter(peaks[:, 1], peaks[:, 0], c='b', s=5)
+    ax.axis('off')
+    fig.colorbar(im, ax=ax)
+    return ax, im, pks
+
+
 def plot_fft_masked(fft, mask, window=0.3, **kwargs):
     """Plot a masked fft"""
     _, ax = plt.subplots()
