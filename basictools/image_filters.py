@@ -484,37 +484,38 @@ def bin2(a, factor, resample=Image.NEAREST):
     return binned
 
 
-def bin2_simple(a, factor):
+def bin2_simple(a, scale):
     """
-    Rebin an image
+    Rebin an array by an integer factor
 
-    A simple additive rebinning of a 2D array
+    A simple additive rebinning of an array
 
     Parameters
     ----------
     a : array-like
-        The 2D array representing an image
-    factor : int
-        The image is resized to initial size/factor.
+        The array
+    factor : tuple of a.ndim ints
+        The array is resized to (initial size)/factor, on each axis.
 
     Returns
     -------
     binned : array-like
-        The binned image
+        The binned array
 
     Notes
     -----
-    This is based on: http://scipy.org/Cookbook/Rebinning
-    It is simplified to the case of a 2D array with the same
-    binning factor in both dimensions.
+    This is based on: Hyperspy rebinning
     """
-    # TODO: better error handling concerning valid factor values
-    assert len(a.shape) == 2
-    newshape = int(a.shape[0]/factor), int(a.shape[1]/factor)
-    tmpshape = (newshape[0], factor, newshape[1], factor)
-    f = factor * factor
-    binned = np.sum(np.sum(np.reshape(a, tmpshape), 1), 2) / f
-    return binned
+    # copied from Hyperspy rebin function
+    lenShape = len(a.shape)
+    new_shape = np.asarray(a.shape) // np.asarray(scale)
+    new_shape = tuple(int(ns) for ns in new_shape)
+    rshape = ()
+    for athing in zip(new_shape, scale):
+        rshape += athing
+    data = a.reshape(rshape).sum(axis=tuple(
+        2 * i + 1 for i in range(lenShape)))
+    return data
 
 
 class Filter(object):
