@@ -3905,7 +3905,106 @@ class Spectrum(TEMDataSet):
 
 class LineSpectrum(TEMDataSet):
     """Abstraction of line spectrum"""
-    pass
+    def __init__(self, *args, **kwargs):
+        super().__init__(*args, **kwargs)
+        self.__x = "scan_l"
+
+    @property
+    def x(self):
+        return self.__x
+
+    @property
+    def pixelsize(self):
+        return self._get_axis_prop(self.x, "scale")
+
+    @property
+    def pixelunit(self):
+        return self._get_axis_prop(self.x, "unit")
+
+    @property
+    def length(self):
+        return self._get_axis_prop(self.x, "bins")
+
+    @property
+    def channels(self):
+        return self._get_axis_prop("channel", "bins")
+
+    @property
+    def dispersion(self):
+        return self._get_axis_prop("channel", "scale")
+
+    @property
+    def energy_unit(self):
+        return self._get_axis_prop("channel", "unit")
+
+    @property
+    def spectrum_offset(self):
+        return self._get_axis_prop("channel", "offset")
+
+    def _get_energy_of_channel(self, channel):
+        return channel*self.dispersion+self.spectrum_offset
+
+    def _get_channel_of_energy(self, energy):
+        return int((energy-self.spectrum_offset)/self.dispersion)
+
+    def set_scale(self, scale, unit):
+        """Set the scan pixel scale and unit"""
+        self.set_axis_scale(self.x, scale, unit)
+
+    def set_energy_axis(self, dispersion, unit, offset=0):
+        """Set the energy scale, unit and offset"""
+        self.set_axis_scale("channel", dispersion, unit, offset)
+
+    @property
+    def spectrum(self):
+        data = self.data.sum(axis=1)
+        process = "Total spectrum"
+        return create_new_spectrum(data, self.dispersion, self.energy_unit,
+                                   self.spectrum_offset, parent=self,
+                                   process=process)
+
+    def _get_start_end_channels(self, energy, width):
+        start = self._get_channel_of_energy(energy-width/2)
+        if start < 0:
+            start = 0
+        # ending channel index
+        end = self._get_channel_of_energy(energy+width/2)
+        if end > self.channels:
+            end = self.channels
+        return (start, end)
+
+    def _integrate_to_line(self, energy, width):
+        start, end = self._get_start_end_channels(energy, width)
+        return self.data[start:end, :].sum(axis=0)
+
+    def get_profile(self, energy, width):
+        start, end = self._get_start_end_channels(energy, width)
+        dt_ar = self.data[start:end, :].sum(axis=0)
+        process = (f"Integrated channels {start}-{end} "
+                   f"({energy} p.m. {width} {self.energy_unit})")
+        nprof = create_profile(dt_ar, self.pixelsize, self.pixelunit, self,
+                               process)
+        return nprof
+
+    def plot_interactive(self):
+        pl.plot_line_spectrum(self)
+
+    def to_hspy(self, filename=None):
+        """
+        Turn into spectrum map object
+        """
+        hs = super().get_hs()
+        hsim = hs.signals.Signal1D(self.data)
+        hsim.axes_manager[0].name = "Energy"
+        hsim.axes_manager["Energy"].units = self.energy_unit
+        hsim.axes_manager["Energy"].scale = self.dispersion
+        hsim.axes_manager["Energy"].offset = self.spectrum_offset
+        hsim.axes_manager[1].name = self.x
+        hsim.axes_manager[self.x].units = self._get_axis_prop(self.x, "unit")
+        hsim.axes_manager[self.x].scale = self._get_axis_prop(self.x, "scale")
+        if filename:
+            hsim.save(str(Path(filename)))
+        return hsim
 
 
 class SpectrumMap(TEMDataSet):
@@ -3999,8 +4098,7 @@ class SpectrumMap(TEMDataSet):
     def _get_channel_of_energy(self, energy):
         return int((energy-self.spectrum_offset)/self.dispersion)
 
-    def _get_integrated_image(self, energy, width):
-        # starting channel index
+    def _get_start_end_channels(self, energy, width):
         start = self._get_channel_of_energy(energy-width/2)
         if start < 0:
             start = 0
@@ -4008,6 +4106,11 @@ class SpectrumMap(TEMDataSet):
         end = self._get_channel_of_energy(energy+width/2)
         if end > self.channels:
             end = self.channels
+        return (start, end)
+
+    def _get_integrated_image(self, energy, width):
+        # starting channel index
+        start, end = self._get_start_end_channels(energy, width)
         # add all these columns and make into 1D numpy array
         return self.data[start:end, :, :].sum(axis=0)
 
@@ -4027,14 +4130,8 @@ class SpectrumMap(TEMDataSet):
         nimg : GeneralImage
             New image object
         '''
-        start = self._get_channel_of_energy(energy-width/2)
-        if start < 0:
-            start = 0
-        # ending channel index
-        end = self._get_channel_of_energy(energy+width/2)
-        if end > self.channels:
-            end = self.channels
-        dt_ar = self.data[start:end, :, :].sum(axis=0)
+        start, end = self._get_start_end_channels(energy, width)
+        dt_ar = self._get_integrated_image(energy, width)
         process = (f"Integrated channels {start}-{end} "
                    f"({energy} p.m. {width} {self.energy_unit})")
         nimg = create_new_image(dt_ar, self.pixelsize, self.pixelunit, self,
@@ -4067,18 +4164,9 @@ class SpectrumMap(TEMDataSet):
                                            "and y-dimension")
         assert self.height % factor == 0, ("Factor must divide x "
                                            "and y-dimension")
-        a = self.data
-        # copied from Hyperspy rebin function
         scale = np.array([1, factor, factor])
-        lenShape = len(a.shape)
-        new_shape = np.asarray(a.shape) // np.asarray(scale)
-        new_shape = tuple(int(ns) for ns in new_shape)
-        rshape = ()
-        for athing in zip(new_shape, scale):
-            rshape += athing
-        data = a.reshape(rshape).sum(axis=tuple(
-            2 * i + 1 for i in range(lenShape)))
-        process = f"Rebinned x and y axis by factor {factor}"
+        data = imf.bin2_simple(self.data, scale)
+        process = f"Rebinned {self.x} and {self.y} axis by factor {factor}"
         return self._create_child_map(inplace, data,
                                       pixelsize=self.pixelsize*factor,
                                       process=process)
@@ -4107,17 +4195,8 @@ class SpectrumMap(TEMDataSet):
         assert factor >= 1, "Factor must be greater than 1"
         assert self.channels % factor == 0, ("Factor must divide "
                                              "channel-dimension")
-        a = self.data
-        # copied from Hyperspy rebin function
         scale = np.array([factor, 1, 1])
-        lenShape = len(a.shape)
-        new_shape = np.asarray(a.shape) // np.asarray(scale)
-        new_shape = tuple(int(ns) for ns in new_shape)
-        rshape = ()
-        for athing in zip(new_shape, scale):
-            rshape += athing
-        data = a.reshape(rshape).sum(axis=tuple(
-            2 * i + 1 for i in range(lenShape)))
+        data = imf.bin2_simple(self.data, scale)
         process = f"Rebinned channel axis by factor {factor}"
         return self._create_child_map(inplace, data,
                                       dispersion=self.dispersion*factor,
@@ -4147,11 +4226,46 @@ class SpectrumMap(TEMDataSet):
                                    self.spectrum_offset, parent=self,
                                    process=process)
 
-    def line_spectrum(self, x1, y1, x2, y2, width=1):
+    def line_spectrum(self, x1, y1, x2, y2, w=1):
         """
         Get a line spectrum object
         """
-        pass
+        assert (x1 >= 0 and x1 < self.width and
+                x2 >= 0 and x2 < self.width and
+                y1 >= 0 and y1 < self.height and
+                y2 >= 0 and y2 < self.height), "Some index is out of bounds"
+        img = self.data.copy()
+        rt = algutil.rotangle(x1, y1, x2, y2)
+        # rotated matrix - quite slow!
+        rim = ndi.rotate(img, rt, (2, 1), cval=0)
+        # get rotated coordinates of the ends of the line
+        le = algutil.distance(x1, y1, x2, y2)
+        d = (x2-x1)/le
+        b = (y2-y1)/le
+        midxold = img.shape[2]/2
+        midyold = img.shape[1]/2
+        midxnew = rim.shape[2]/2
+        midynew = rim.shape[1]/2
+        x1r = int(round(d*(x1-midxold)+b*(y1-midyold) + midxnew))
+        x1r = max(0, x1r)  # take into consideration out of bounds
+        y1r = int(round(-b*(x1-midxold)+d*(y1-midxold) + midynew))
+        x2r = int(round(d*(x2-midxold)+b*(y2-midxold) + midxnew))
+        x2r = min(img.shape[2], x2r)  # take into consideration out of bounds
+        # y2r = int(round(-b*(x2-midxold)+d*(y2-midxold) + midynew))
+        # is of course equal to y1r
+        # select the "window" around the line and sum over the height
+        # take into consideration out of bounds
+        yb1 = max((y1r-w//2), 0)
+        yb2 = min((y1r+w//2+1), img.shape[1])
+        lpf = rim[:, yb1:yb2, x1r:x2r].sum(axis=1)
+        logger.debug(f"Shape of line profile data: {lpf.shape}")
+        # create line_profile object
+        process = (f"Spectrum line profile from ({x1}, {y1}) to ({x2}, {y2}). "
+                   f"Integration width: {w}")
+        return create_new_line_spectrum(lpf, self.pixelsize, self.pixelunit,
+                                        self.dispersion, self.energy_unit,
+                                        self.spectrum_offset,
+                                        parent=self, process=process)
 
     def to_hspy(self, filename=None):
         """

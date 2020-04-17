@@ -555,6 +555,64 @@ def plot_stack(stack):
     plt.show()
 
 
+def plot_line_spectrum(specline):
+    """
+    Plot an interactive spectrum map
+    """
+    axwidth = 0.7
+    axheight = 0.03
+
+    fig, ax = plt.subplots(figsize=(8, 6))
+    plt.subplots_adjust(bottom=0.25, left=0.5-axwidth/2)
+
+    e0 = 0
+    w0 = 0.5
+
+    spec = specline.spectrum
+
+    # maximum for sliders
+    emin = specline._get_energy_of_channel(0)
+    emax = specline._get_energy_of_channel(specline.channels)
+
+    prof = specline.get_profile(e0, w0)
+    # img = imf.linscale(img, intmin, intmax)
+    _, lpf = prof.plot(axis=ax)
+    lpf = lpf[0]
+
+    axcolor = 'white'
+    # [x, y, width, height]
+    axenergy = plt.axes([0.5-axwidth/2, 0.10, axwidth, axheight],
+                        facecolor=axcolor)
+    axwidth = plt.axes([0.5-axwidth/2, 0.05, axwidth, axheight],
+                       facecolor=axcolor)
+
+    sen = wdgts.Slider(axenergy, f'Energy ({specline.energy_unit})', emin,
+                       emax, valinit=e0)
+    swi = wdgts.Slider(axwidth, f'Width ({specline.energy_unit})', 0,
+                       (emax-emin)/2, valinit=w0)
+    axenergy._slider = sen
+    axwidth._slider = swi
+
+    def update_im(val):
+        en = sen.val
+        wi = swi.val
+        arr = specline._integrate_to_line(en, wi)
+        lpf.set_ydata(arr)
+        fig.canvas.draw_idle()
+
+    sen.on_changed(update_im)
+    swi.on_changed(update_im)
+
+    # plot the spectrum on the energy axis
+    _, lne = spec.plot(ax=axenergy)
+    axenergy.set_ylim(0, spec.data.max()/3)
+    axenergy.set_xlabel("")
+    axenergy.set_ylabel("")
+    lne[0].set_color("red")
+
+    plt.show()
+
+
 def plot_spectrum_map(specmap):
     """
     Plot an interactive spectrum map
@@ -564,7 +622,7 @@ def plot_spectrum_map(specmap):
     ax.set_aspect("equal")
 
     e0 = 0
-    w0 = 30*specmap.dispersion
+    w0 = 0.5
 
     spec = specmap.spectrum
 
