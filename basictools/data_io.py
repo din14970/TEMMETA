@@ -1,29 +1,5 @@
 """
 Main module to interact with TEM data
-
-Functions
----------
-read_emd
-    Open an EMD file as an EMDFile object
-open_emd_gui
-    Open an EMD file using a file dialog
-compress_matrix
-    Convert an array to a sparse matrix of a particular type
-change_compress_type
-    Change the compression type of a sparse matrix
-
-Classes
--------
-EMDFile
-    Class representing an EMD file. Subclasses h5py.File.
-TEMDataSet
-    Class representing some general TEM dataset
-GeneralImage
-    Class representing a 2D image
-GeneralImageStack
-    Class representing a 2D image stack
-SpectrumStream
-    Class representing a spectrum stream
 """
 
 # Base modules
