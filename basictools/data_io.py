@@ -41,6 +41,7 @@ import json
 import scipy.sparse as spa
 import scipy.ndimage as ndi
 import pandas as pd
+from tqdm import tqdm
 
 # For working with images
 from PIL import Image
@@ -4563,7 +4564,7 @@ class SpectrumStream(TEMDataSet):
         # correct the images
         newdat = []
         frmlst = self._get_frame_list()
-        for j, i in enumerate(frmlst):
+        for j, i in tqdm(enumerate(frmlst)):
             frm = SpectrumStream._reshape_sparse_matrix(i, self.dimensions)
             frm = ndi.shift(frm, (0, sy[j], sx[j]))
             frm = SpectrumStream._to_sparse(frm)
