@@ -8,8 +8,8 @@ dependencies:
   - scipy
   - jupyter
   - hyperspy
-  - matplotlib_scalebar
+  - matplotlib-scalebar
   - tqdm
   - pillow
-  - opencv-python
-  - pyqt5
+  - opencv
+  - pyqt
