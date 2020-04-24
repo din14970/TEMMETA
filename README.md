@@ -6,6 +6,8 @@ TEMMETA is a library for transmission electron microscopy (TEM) (meta)data manip
 
 **Last updated**: 18/04/2020
 
+**Try it now**: [![Binder](https://mybinder.org/badge_logo.svg)](https://mybinder.org/v2/gh/din14970/TEMMETA/master?filepath=examples%2FTEMMETA%20demonstration.ipynb)
+
 ## What can TEMMETA do?
 
 * For **images**:
