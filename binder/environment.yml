@@ -1,0 +1,15 @@
+name: TEMMETA
+channels:
+  - conda-forge
+dependencies:
+  - pandas
+  - numpy
+  - matplotlib
+  - scipy
+  - jupyter
+  - hyperspy
+  - matplotlib_scalebar
+  - tqdm
+  - pillow
+  - opencv-python
+  - pyqt5
