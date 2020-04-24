@@ -5,7 +5,7 @@ with open("README.md") as f:
 
 setup(
     name="temmeta",
-    version="0.0.2",
+    version="0.0.3",
     description=("TEMMETA is a library for transmission electron microscopy "
                  "(TEM) (meta)data manipulation"),
     url='https://github.com/din14970/TEMMETA',
@@ -13,6 +13,7 @@ setup(
     author_email='nielscautaerts@hotmail.com',
     license='GPL-3.0',
     long_description=readme,
+    long_description_content_type="text/markdown",
     classifiers=['Topic :: Scientific/Engineering :: Physics',
                  'Intended Audience :: Science/Research',
                  'Operating System :: OS Independent',
