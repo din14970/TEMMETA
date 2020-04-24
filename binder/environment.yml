@@ -13,3 +13,5 @@ dependencies:
   - pillow
   - py-opencv 
   - pyqt
+  - pip:
+      - temmeta
