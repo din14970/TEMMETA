@@ -11,5 +11,5 @@ dependencies:
   - matplotlib-scalebar
   - tqdm
   - pillow
-  - opencv
+  - py-opencv 
   - pyqt
