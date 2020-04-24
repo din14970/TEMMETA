@@ -1,5 +1,8 @@
 from setuptools import setup, find_packages
 
+with open("README.md") as f:
+    readme = f.read()
+
 setup(
     name="temmeta",
     version="0.0.1",
@@ -9,7 +12,7 @@ setup(
     author='Niels Cautaerts',
     author_email='nielscautaerts@hotmail.com',
     license='GPL-3.0',
-
+    long_description=readme,
     classifiers=['Topic :: Scientific/Engineering :: Physics',
                  'Intended Audience :: Science/Research',
                  'Operating System :: OS Independent',
@@ -19,6 +22,7 @@ setup(
     packages=find_packages(exclude=["*tests*", "*examples*"]),
     install_requires=[
         'pandas',
+        'openpyxl',
         'numpy',
         'matplotlib',
         'scipy',
