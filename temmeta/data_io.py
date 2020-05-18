@@ -1657,7 +1657,7 @@ class Profile(TEMDataSet):
 
         Metadata not related to linear axes scales and units is lost.
         """
-        hs = super().to_hspy()
+        hs = super().get_hs()
         hsim = hs.signals.Signal1D(self.data)
         hsim.axes_manager[0].name = self.x
         hsim.axes_manager[self.x].units = self._get_axis_prop(self.x, "unit")
