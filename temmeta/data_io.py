@@ -1673,7 +1673,7 @@ class Profile(TEMDataSet):
         x = np.arange(self.length)*self.pixelsize
         adt = np.vstack([x, dt]).T
         gg = pd.DataFrame(adt, columns=[f"x ({self.pixelunit})",
-                                        f"Intensity (a.u.)"])
+                                        "Intensity (a.u.)"])
         gg.to_excel(str(Path(filepath)))
 
 
@@ -3222,7 +3222,7 @@ class GeneralImageStack(TEMDataSet):
         data = self.data.sum(axis=0)
         # Rescale to turn it back into the same datatype as before
         data = imf.normalize_convert(data, dtype=dt)
-        process = f"Averaged all frames in stack"
+        process = "Averaged all frames in stack"
         nimg = create_new_image(data, self.pixelsize, self.pixelunit, self,
                                 process)
         return nimg
@@ -3663,7 +3663,7 @@ def images_to_stack(lst):
     metadata = mda.Metadata()
     metadata.experiment_type = "modified"
     metadata.parent_meta = template.metadata
-    metadata.process = (f"Stacked individual images")
+    metadata.process = ("Stacked individual images")
     xinfo = (data.shape[2], template.pixelunit, template.pixelsize)
     yinfo = (data.shape[1], template.pixelunit, template.pixelsize)
     finfo = (data.shape[0], None, None)
@@ -3690,12 +3690,12 @@ def import_file_to_image(path):
         meta = jt.read_json(metapath)
         metadata = mda.Metadata(meta)
     else:
-        logger.error(f"No metadata json file associated with the image was"
-                     f" found. Creating blank metadata and assuming pixel "
-                     f"units.")
+        logger.error("No metadata json file associated with the image was"
+                     " found. Creating blank metadata and assuming pixel "
+                     "units.")
         metadata = mda.Metadata()
         metadata.experiment_type = "modified"
-        metadata.process = (f"Imported from file")
+        metadata.process = ("Imported from file")
         xinfo = (data.shape[2], "pixels", 1)
         yinfo = (data.shape[1], "pixels", 1)
         metadata["data_axes"] = mda.gen_image_axes(xinfo, yinfo)
@@ -3751,8 +3751,8 @@ def import_files_to_stack(export_folder):
             meta = jt.read_json(export_folder+"/"+meta)
             metadata = mda.Metadata(meta)
         else:
-            logger.error(f"No metadata json file was found in the folder. "
-                         f"Creating blank metadata and assuming pixel units.")
+            logger.error("No metadata json file was found in the folder. "
+                         "Creating blank metadata and assuming pixel units.")
             metadata = mda.Metadata()
             metadata.experiment_type = "modified"
             metadata.process = (f"Imported from individual images in "
@@ -3846,7 +3846,7 @@ class Spectrum(TEMDataSet):
         adt = np.vstack([peaks, peak_energy, peak_heights]).T
         df = pd.DataFrame(adt, columns=["Channel",
                                         f"Energy ({self.energy_unit})",
-                                        f"Intensity (a.u.)"])
+                                        "Intensity (a.u.)"])
         self.peaks = df
         return df, props
 
@@ -3876,7 +3876,7 @@ class Spectrum(TEMDataSet):
         x = self.energy_axis
         adt = np.vstack([x, dt]).T
         gg = pd.DataFrame(adt, columns=[f"Energy ({self.energy_unit})",
-                                        f"Intensity (a.u.)"])
+                                        "Intensity (a.u.)"])
         gg.to_excel(str(Path(filepath)))
 
 
@@ -4585,7 +4585,7 @@ class SpectrumStream(TEMDataSet):
         Add all frames and return 3D matrix representing spectrum map
         '''
         frmdat = self._get_frame_sum(comp_type="csr")
-        process = f"Sum of all frames"
+        process = "Sum of all frames"
         return self._create_child_map(frmdat, process)
 
     @staticmethod
@@ -4713,8 +4713,8 @@ def import_file_to_spectrumstream(path):
         metadata = mda.Metadata(meta)
         return SpectrumStream(data, metadata)
     else:
-        logger.error(f"No metadata json file associated with the stream was"
-                     f" found. Unfortunately the stream can't be recreated.")
+        logger.error("No metadata json file associated with the stream was"
+                     " found. Unfortunately the stream can't be recreated.")
         return
 
 
@@ -4775,9 +4775,9 @@ def import_files_to_spectrumstream(path):
             meta = jt.read_json(path+"/"+meta)
             metadata = mda.Metadata(meta)
         else:
-            logger.error(f"No metadata json file was found in the folder. "
-                         f"Creating blank metadata and guessing axes "
-                         f"dimensions...")
+            logger.error("No metadata json file was found in the folder. "
+                         "Creating blank metadata and guessing axes "
+                         "dimensions...")
             metadata = mda.Metadata()
             metadata.experiment_type = "modified"
             metadata.process = (f"Imported from individual images in "

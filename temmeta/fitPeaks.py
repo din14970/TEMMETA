@@ -19,9 +19,216 @@ import pandas as pd
 from scipy.optimize import least_squares
 from scipy.ndimage.filters import maximum_filter
 from scipy.ndimage.morphology import generate_binary_structure, binary_erosion
+from scipy.spatial import distance_matrix
 
 # Own functions
 from . import image_filters as imf
+
+
+def calculate_NN_network(coords, max_r=None, max_nn=None):
+    """
+    Calculate the nearest neighbor distributuion from a point cloud
+
+    Parameters
+    ----------
+    xy : array, PxD
+        rows represent coordinates of individual points, with P the number
+        of points and D the point space dimensionality
+    max_r : float, optional
+        maximum distance in units of x and y to include in nearest neighbors.
+        Default is not defined. All NN with r>max_r are set to nan.
+    max_nn : int, optional
+        maximum number of nearest neighbors to store. Default is None.
+        This determines the output dimension K. If none then max_nn = P.
+
+    Returns
+    -------
+    nn : array, DxPxK
+        The nearest neighbor coordines. Each PxK matrix (nn[i]) represents
+        an axis (i.e x, y, z, ...), of which the rows represent the K-1 nearest
+        neighbors of each point in the point cloud. The first column is the
+        point itself, the other columns the coordinates of its K-1 nearest
+        neighbors ordered from nearest to furthest.
+
+    Examples
+    --------
+    >>>xy = np.array([[0, 0], [4, 0], [0, 3]])
+    >>>calculate_NN_network(xy)
+    array([[[0., 0., 4.],
+            [4., 0., 0.],
+            [0., 0., 4.]],
+          [[0., 3., 0.],
+           [0., 0., 3.],
+           [3., 0., 0.]]])
+    >>>calculate_NN_network(xy, max_r=4)
+    array([[[0., 0., 4.],
+            [4., 0., nan],
+            [0., 0., nan]],
+          [[0., 3., 0.],
+           [0., 0., nan],
+           [3., 0., nan]]])
+    >>>calculate_NN_network(xy, max_nn=2)
+    array([[[0., 0.],
+            [4., 0.],
+            [0., 0.]],
+          [[0., 3.],
+           [0., 0.],
+           [3., 0.]]])
+    """
+    coords = coords.astype(float)
+    d = distance_matrix(coords, coords)
+    # sort the columns from smallest to biggest and get the original index
+    dsort = np.sort(d, axis=1)
+    mask = None
+    if max_r is not None:
+        # filter out the distances that are too large and set to nan
+        dsort[dsort > max_r] = np.nan
+        # create a mask
+        mask = dsort != dsort
+    indx = np.argsort(d, axis=1)
+    if max_nn is not None:
+        indx = indx[:, :max_nn]
+        if mask is not None:
+            mask = mask[:, :max_nn]
+    # get the coordinate 3D matrix, just do with loop over dims for now
+    nn = []
+    for i in range(coords.shape[1]):
+        coord = coords[:, i]
+        coord_matrix = coord[indx]
+        if mask is not None:
+            coord_matrix[mask] = np.nan
+        nn.append(coord_matrix)
+    nn = np.array(nn)
+    return nn
+
+
+def _get_repeated_original_coords(nn):
+    """
+    Return the initial coordinates with the shape of nn for addition
+    or subtraction
+    """
+    initial_coords = nn[:, :, 0].T
+    init_coord_mat = np.repeat(initial_coords[:, :, np.newaxis],
+                               nn.shape[-1], axis=2)
+    init_coord_mat = np.swapaxes(init_coord_mat, 0, 1)
+    return init_coord_mat
+
+
+def get_NN_distance(nn):
+    """
+    Calculate the euler distances between nearest neighbors
+
+    Parameters
+    ----------
+    nn : array, DxPxK
+        The nearest neighbor coordines. See :method:calculate_NN_network
+
+    Returns
+    -------
+    dist: array, PxK
+        Euler distances between first K nearest neighbors of P points. The
+        first column will be 0's as this represents the distance from each
+        point to itself
+    """
+    inco = _get_repeated_original_coords(nn)
+    diff = nn-inco
+    diff = diff**2
+    dist = np.sqrt(diff.sum(axis=0))
+    return dist
+
+
+def get_NN_angle(nn, vector=None, usesense=True, sense=None, units="radians"):
+    """
+    Calculate angles towards nearest neighbors
+
+    Parameters
+    ----------
+    nn : array, DxPxK
+        Nearest neighbor array with dimensions D (number of dimensions)
+        of the original point cloud, P (number of points), K (number of
+        nearest neighbors)
+    vector : array, D, optional
+        Vector relative to which the angles to the nearest neighbors are
+        calculated. Must have the same dimensionality as the point cloud.
+        By default, a unit vector parrallel to the first dimension of the
+        point cloud is chosen (usually x).
+    usesense : bool, optional
+        Whether to use the full +/-180 degrees rotation range or not. If False
+        the result of arccos is returned. If True, the NN position relative
+        to the hyperplane is considered to define positive and negative
+        angles. Makes the most sense in 2D point clouds where all points
+        lie in the plane.
+    sense : array, D, optional
+        Vector that defines the normal of a hyper-plane for dividing the
+        space and defining positive (above the plane) and negative angles
+        (below the plane). Must be perpendicular to vector. By default it
+        is a unit vector parallel to the second dimension of the point
+        cloud (usually y).
+    units : str, optional
+        Return format. Options: "radians" or "degrees"
+
+    Returns
+    -------
+    angle : array, PxK
+        Angles for each point (rows) to its first K (columns) nearest
+        neighbors
+    """
+    # must be 3d array and at least 2 dimensions to the point cloud
+    if nn.ndim != 3:
+        raise ValueError("Nearest neighbor coordinate array must be 3D")
+    if nn.shape[0] < 2:
+        raise ValueError("Point cloud must have at least two coordinates for"
+                         "angles")
+    if vector is None:
+        vector = np.zeros(nn.shape[0])
+        vector[0] = 1.
+    else:
+        vector = np.array(vector)
+        if len(vector) != nn.shape[0]:
+            raise ValueError("Reference vector has the wrong number of"
+                             "dimensions.")
+    if sense is None:
+        sense = np.zeros(nn.shape[0])
+        sense[1] = 1.
+    else:
+        sense = np.array(sense)
+        if len(sense) != nn.shape[0]:
+            raise ValueError("Sense vector has the wrong number of"
+                             "dimensions.")
+    if np.dot(sense, vector) != 0.:
+        raise ValueError("Sense and vector must be perpendicular")
+    vector = vector/np.linalg.norm(vector)
+    sense = sense/np.linalg.norm(sense)
+    inco = _get_repeated_original_coords(nn)
+    diff = nn-inco
+    dist = get_NN_distance(nn)
+    # tile the vector
+    tv = np.tile(vector, (nn.shape[1], nn.shape[2], 1))
+    tv = np.rollaxis(tv, -1)
+    # multiply the tiled vector and diff, then sum = dot product
+    dp = (tv*diff).sum(axis=0)
+    # get the sense if using sense
+    if usesense:
+        ts = np.tile(sense, (nn.shape[1], nn.shape[2], 1))
+        ts = np.rollaxis(ts, -1)
+        # multiply the tiled vector and diff, then sum = dot product. Then we
+        # just use the sign.
+        san = np.sign((ts*diff).sum(axis=0))
+        # wherever it is 0 (vector is in the plane), we set it to 1
+        san[san == 0] = 1
+    else:
+        # we don't use sense
+        san = 1
+    with np.errstate(divide='ignore', invalid='ignore'):
+        cosan = np.divide(dp, dist)
+    # return arccos of result
+    angle = np.arccos(cosan)*san
+    if units == "radians":
+        return angle
+    elif units == "degrees":
+        return np.rad2deg(angle)
+    else:
+        raise ValueError(f"Units not recognized: {units}")
 
 
 def _detect_peaks(image):
