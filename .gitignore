@@ -1,3 +1,17 @@
+examples/Test/
+examples/Test2/
+examples/Test_stack/
+examples/average.hspy
+examples/average.png
+examples/average_meta.json
+examples/colorful.tiff
+examples/fft.png
+examples/mask.png
+examples/mask_meta.json
+examples/profile1.hspy
+examples/profile1.xlsx
+examples/spectrum.hspy
+examples/spectrum.xlsx
 garbage
 tags
 examples/data

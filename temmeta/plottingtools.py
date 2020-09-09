@@ -380,10 +380,6 @@ def plot_array(imgdata, pixelsize=1., pixelunit="", scale_bar=True,
         # check the units and adjust sb accordingly
         scalebar = get_scalebar(px, unit, sb_settings)
         plt.gca().add_artist(scalebar)
-    if show_fig:
-        plt.show()
-    else:
-        plt.close()
     return ax, im
 
 

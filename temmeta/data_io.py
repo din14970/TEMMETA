@@ -31,6 +31,7 @@ from . import processing as proc
 from . import metadata as mda
 from . import jsontools as jt
 from . import algebrautils as algutil
+from .roi import line
 
 import concurrent.futures as cf
 from multiprocessing import Pool, cpu_count
@@ -926,7 +927,7 @@ class EMDFile(h5py.File):
                     meta.data_axes.channel.bins,
                     meta.data_axes.frame.bins)
             specstr = EMDFile._convert_stream_to_sparse(
-                rd[()], dims, compress_type="csr")
+                rd[()].flatten(), dims, compress_type="csr")
             return SpectrumStream(specstr, meta, ometa)
 
     def _get_image_data_ds_no(self, ds_no):
@@ -1858,46 +1859,18 @@ class GeneralImage(TEMDataSet):
         yu = self._get_axis_prop(self.y, "unit")
         return (xs*xb, xu, ys*yb, yu)
 
-    def intensity_profile(self, x1, y1, x2, y2, w=1):
+    def intensity_profile(self, x1, y1, x2, y2, w=1, **kwargs):
         """
         Return an array of summed intensities along a line
 
-        It works by rotating the image so the line vector is horizontal.
-        The rotation is calculated with scipy.ndimage.rotate, filling up
-        the boundary with the mean of the image (in case of profiles on
-        the edge) and 3rd order spline interpolation.
+        Uses a method adapted from Hyperspy
         """
-        assert (x1 >= 0 and x1 < self.width and
-                x2 >= 0 and x2 < self.width and
-                y1 >= 0 and y1 < self.height and
-                y2 >= 0 and y2 < self.height), "Some index is out of bounds"
-        img = self.data.copy()
-        rt = algutil.rotangle(x1, y1, x2, y2)
-        cst = img.mean()
-        # rotated image
-        rim = ndi.rotate(img, rt, cval=cst)
-        # get rotated coordinates of the ends of the line
-        le = algutil.distance(x1, y1, x2, y2)
-        d = (x2-x1)/le
-        b = (y2-y1)/le
-        midxold = img.shape[1]/2
-        midyold = img.shape[0]/2
-        midxnew = rim.shape[1]/2
-        midynew = rim.shape[0]/2
-        x1r = int(round(d*(x1-midxold)+b*(y1-midyold) + midxnew))
-        x1r = max(0, x1r)  # take into consideration out of bounds
-        y1r = int(round(-b*(x1-midxold)+d*(y1-midxold) + midynew))
-        x2r = int(round(d*(x2-midxold)+b*(y2-midxold) + midxnew))
-        x2r = min(img.shape[1], x2r)  # take into consideration out of bounds
-        # y2r = int(round(-b*(x2-midxold)+d*(y2-midxold) + midynew))
-        # select the "window" around the line and sum over the height
-        # take into consideration out of bounds
-        yb1 = max((y1r-w//2), 0)
-        yb2 = min((y1r+w//2+1), img.shape[0])
-        lpf = rim[yb1:yb2, x1r:x2r].sum(axis=0)
+        intensities = line.profile_line(self.data, (x1, y1), (x2, y2),
+                                        linewidth=w, **kwargs)
         # create line_profile object
-        process = f"Intensity line profile from ({x1}, {y1}) to ({x2}, {y2})"
-        return create_profile(lpf, self.pixelsize, self.pixelunit,
+        process = (f"Intensity line profile from ({x1}, {y1}) to ({x2}, {y2})"
+                   f" with width {w}")
+        return create_profile(intensities, self.pixelsize, self.pixelunit,
                               parent=self, process=process)
 
     def _create_child_image(self, inplace, *args, **kwargs):
@@ -4203,38 +4176,12 @@ class SpectrumMap(TEMDataSet):
                                    self.spectrum_offset, parent=self,
                                    process=process)
 
-    def line_spectrum(self, x1, y1, x2, y2, w=1):
+    def line_spectrum(self, x1, y1, x2, y2, w=1, **kwargs):
         """
         Get a line spectrum object
         """
-        assert (x1 >= 0 and x1 < self.width and
-                x2 >= 0 and x2 < self.width and
-                y1 >= 0 and y1 < self.height and
-                y2 >= 0 and y2 < self.height), "Some index is out of bounds"
-        img = self.data.copy()
-        rt = algutil.rotangle(x1, y1, x2, y2)
-        # rotated matrix - quite slow!
-        rim = ndi.rotate(img, rt, (2, 1), cval=0)
-        # get rotated coordinates of the ends of the line
-        le = algutil.distance(x1, y1, x2, y2)
-        d = (x2-x1)/le
-        b = (y2-y1)/le
-        midxold = img.shape[2]/2
-        midyold = img.shape[1]/2
-        midxnew = rim.shape[2]/2
-        midynew = rim.shape[1]/2
-        x1r = int(round(d*(x1-midxold)+b*(y1-midyold) + midxnew))
-        x1r = max(0, x1r)  # take into consideration out of bounds
-        y1r = int(round(-b*(x1-midxold)+d*(y1-midxold) + midynew))
-        x2r = int(round(d*(x2-midxold)+b*(y2-midxold) + midxnew))
-        x2r = min(img.shape[2], x2r)  # take into consideration out of bounds
-        # y2r = int(round(-b*(x2-midxold)+d*(y2-midxold) + midynew))
-        # is of course equal to y1r
-        # select the "window" around the line and sum over the height
-        # take into consideration out of bounds
-        yb1 = max((y1r-w//2), 0)
-        yb2 = min((y1r+w//2+1), img.shape[1])
-        lpf = rim[:, yb1:yb2, x1r:x2r].sum(axis=1)
+        lpf = line.profile_line(self.data, (x1, y1), (x2, y1),
+                                linewidth=1, **kwargs)
         logger.debug(f"Shape of line profile data: {lpf.shape}")
         # create line_profile object
         process = (f"Spectrum line profile from ({x1}, {y1}) to ({x2}, {y2}). "
