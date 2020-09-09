@@ -674,7 +674,7 @@ class EMDFile(h5py.File):
         # calc the dimensions of the sparse matrix
         dim_sparse = (xs*ys*frm, ch)
         # calc the pixel index to which these counts must be mapped
-        pixind = cinx - np.arange(cinx.shape[0]) - 1
+        pixind = cinx - np.arange(cinx.shape[0])
         # create an array of 1 representing the count
         ns = np.ones(chans.shape[0], dtype=d1d.dtype)
         # create the sparse matrix
@@ -926,7 +926,7 @@ class EMDFile(h5py.File):
                     meta.data_axes.channel.bins,
                     meta.data_axes.frame.bins)
             specstr = EMDFile._convert_stream_to_sparse(
-                rd.value.ravel(), dims, compress_type="csr")
+                rd[()], dims, compress_type="csr")
             return SpectrumStream(specstr, meta, ometa)
 
     def _get_image_data_ds_no(self, ds_no):
