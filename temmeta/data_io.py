@@ -23,15 +23,15 @@ from tqdm import tqdm
 from PIL import Image
 
 # My own modules
-from . import plottingtools as pl
-from . import image_filters as imf
-from ._decorators import timeit
-from .guitools import file_dialog as fdo
-from . import processing as proc
-from . import metadata as mda
-from . import jsontools as jt
-from . import algebrautils as algutil
-from .roi import line
+from temmeta import plottingtools as pl
+from temmeta import image_filters as imf
+from temmeta._decorators import timeit
+from temmeta.guitools import file_dialog as fdo
+from temmeta import processing as proc
+from temmeta import metadata as mda
+from temmeta import jsontools as jt
+from temmeta import algebrautils as algutil
+from temmeta.roi import line
 
 import concurrent.futures as cf
 from multiprocessing import Pool, cpu_count
@@ -3188,13 +3188,11 @@ class GeneralImageStack(TEMDataSet):
                                 process)
         return nimg
 
+    @property
     def average(self):
         """Average the frames, return GeneralImage object"""
         # Sum becomes a uint64 image
-        dt = self.data.dtype
-        data = self.data.sum(axis=0)
-        # Rescale to turn it back into the same datatype as before
-        data = imf.normalize_convert(data, dtype=dt)
+        data = self.data.mean(axis=0)
         process = "Averaged all frames in stack"
         nimg = create_new_image(data, self.pixelsize, self.pixelunit, self,
                                 process)

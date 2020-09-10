@@ -19,3 +19,14 @@ def distance(x1, y1, x2, y2):
     """Get the euclidian distance between two points"""
     le = np.sqrt((x2-x1)**2+(y2-y1)**2)
     return le
+
+
+def get_center_and_radius(x1, y1, x2, y2, x3, y3):
+    """Get the coordinates of the center and radius of
+    a circle defined by 3 points p_i=(x_i, y_i)"""
+    cx = (((x1**2-x3**2+y1**2-y3**2)*(y2-y1) -
+          (x1**2-x2**2+y1**2-y2**2)*(y3-y1)) /
+          (2*((x2-x1)*(y3-y1)-(x3-x1)*(y2-y1))))
+    cy = (-(x1**2-x2**2+y1**2-y2**2)-2*(x2-x1)*cx)/(2*(y2-y1))
+    r = ((x1-cx)**2+(y1-cy)**2)**0.5
+    return (cx, cy), r

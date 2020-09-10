@@ -5,7 +5,7 @@ with open("README.md") as f:
 
 setup(
     name="temmeta",
-    version="0.0.4",
+    version="0.0.6",
     description=("TEMMETA is a library for transmission electron microscopy "
                  "(TEM) (meta)data manipulation"),
     url='https://github.com/din14970/TEMMETA',
@@ -27,12 +27,9 @@ setup(
         'openpyxl',
         'pandas',
         'scipy',
-        'jupyter',
         'hyperspy',
         'matplotlib_scalebar',
         'tqdm',
         'Pillow',
-        'opencv-python',
-        'PyQt5'
     ],
 )
