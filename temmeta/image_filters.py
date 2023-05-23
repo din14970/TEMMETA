@@ -346,7 +346,7 @@ def _find_outliers(raw, percent=0.07, bins=(2**16)):
     """
     raw = np.array(raw)
     cnts, bin_edges = np.histogram(raw, bins=bins)
-    stats = np.zeros((2, bins), dtype=np.int)
+    stats = np.zeros((2, bins), dtype=int)
     # Calculate cumulative intensity distribution
     stats[0] = np.cumsum(cnts)  # low
     stats[1] = np.cumsum(cnts[::-1])  # high
