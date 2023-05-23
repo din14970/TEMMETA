@@ -60,7 +60,7 @@ def normalize(arr):
     return linscale(arr)
 
 
-def linscale(arr, min=None, max=None, nmin=0, nmax=1, dtype=np.float):
+def linscale(arr, min=None, max=None, nmin=0, nmax=1, dtype=float):
     """
     Rescale image intensities
 
@@ -131,7 +131,7 @@ def _get_dtype_min_max(dtype):
 
     For floats it just returns 0 and 1
     """
-    if dtype == np.float or dtype == np.float32 or dtype == np.float64:
+    if dtype == float or dtype == np.float32 or dtype == np.float64:
         max = 1  # np.finfo(dtype).max
         min = 0  # np.finfo(dtype).min
     elif (dtype == np.int8 or dtype == np.uint8 or
